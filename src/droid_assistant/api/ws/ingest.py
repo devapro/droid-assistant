@@ -244,5 +244,14 @@ async def _mark_nearest(services: Any, session_id: str, t_ms: int | None) -> Non
         "SELECT id FROM utterances WHERE session_id = ? ORDER BY abs(start_ms - ?) LIMIT 1",
         (session_id, t_ms),
     )
-    if row is not None:
-        await services.repo.update_utterance(row["id"], marked=True)
+    if row is None:
+        return
+    await services.repo.update_utterance(row["id"], marked=True)
+    # Told to every view watching this session, not just recorded. Without it
+    # the button raised a toast and changed nothing anyone could see, which is
+    # most of why the feature read as missing.
+    await services.bus.publish(
+        session_id,
+        EventType.UTTERANCE_MARKED,
+        {"utterance_id": row["id"], "marked": True},
+    )

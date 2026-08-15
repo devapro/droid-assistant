@@ -841,3 +841,75 @@ class TestModelLoading:
         )
         await services.reconfigure(settings)
         assert services.model_state == "ready"
+
+
+class TestMarkedMoments:
+    """FR-CAP-18. Both halves of it: flagged *and* findable.
+
+    The second half was never built — a mark set a database column, showed a
+    12 px glyph, told no other view it had happened, and left no way to find the
+    recording holding it short of opening every recording.
+    """
+
+    def a_session(self, client) -> tuple[str, list[dict]]:
+        created = client.post("/api/sessions", json={"languages": ["en"]}).json()
+        session_id = created["session_id"]
+        with client.websocket_connect(f"/ws/ingest?token={created['ingest_token']}") as websocket:
+            websocket.receive_json()
+            stream_audio(websocket, conversation())
+        client.post(f"/api/sessions/{session_id}/stop")
+        return session_id, client.get(f"/api/sessions/{session_id}").json()["utterances"]
+
+    def test_marking_a_line_is_announced_to_every_open_view(self, client) -> None:
+        """Without this the Mark button raised a toast and changed nothing
+        anyone could see, and a mark set in one tab never reached another."""
+        session_id, utterances = self.a_session(client)
+        with client.websocket_connect(f"/ws/sessions/{session_id}") as events:
+            client.patch(f"/api/utterances/{utterances[0]['utterance_id']}", json={"marked": True})
+            # The socket replays what the session already produced before it
+            # reaches the new one, so read past the backlog rather than assuming
+            # the next frame is ours.
+            for _ in range(50):
+                event = events.receive_json()
+                if event.get("type") == "utterance.marked":
+                    break
+            else:
+                raise AssertionError("no utterance.marked event arrived")
+
+        assert event["data"] == {
+            "utterance_id": utterances[0]["utterance_id"],
+            "marked": True,
+        }
+
+    def test_marking_is_a_toggle(self, client) -> None:
+        _session_id, utterances = self.a_session(client)
+        target = utterances[0]["utterance_id"]
+
+        assert client.patch(f"/api/utterances/{target}", json={"marked": True}).json()["marked"]
+        assert not client.patch(f"/api/utterances/{target}", json={"marked": False}).json()[
+            "marked"
+        ]
+
+    def test_the_history_row_says_how_many_are_marked(self, client) -> None:
+        """A mark is worth nothing if finding the recording that holds it means
+        opening every recording."""
+        session_id, utterances = self.a_session(client)
+        row = next(
+            s for s in client.get("/api/sessions").json()["sessions"] if s["id"] == session_id
+        )
+        assert row["marked_count"] == 0
+
+        client.patch(f"/api/utterances/{utterances[0]['utterance_id']}", json={"marked": True})
+        row = next(
+            s for s in client.get("/api/sessions").json()["sessions"] if s["id"] == session_id
+        )
+        assert row["marked_count"] == 1
+
+    def test_marking_does_not_make_the_artifacts_stale(self, client) -> None:
+        """Flagging a moment changes no text, so nothing derived from the text
+        needs regenerating — unlike an edit (FR-SES-9)."""
+        _session_id, utterances = self.a_session(client)
+        body = client.patch(
+            f"/api/utterances/{utterances[0]['utterance_id']}", json={"marked": True}
+        ).json()
+        assert body["artifacts_stale"] is False

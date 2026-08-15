@@ -475,6 +475,11 @@ function SessionRow({
           {/* `action_items_json` is the machine-readable half of one artifact,
               and listing it beside `action_items` told the reader they had two
               different things. */}
+          {/* Ahead of the artifact pills: a mark is something *you* put there,
+              and it is the reason you would open this row rather than another. */}
+          {Boolean(session.marked_count) && (
+            <Pill tone="warn">{strings.history.markedCount(session.marked_count ?? 0)}</Pill>
+          )}
           {readableKinds.length ? (
             readableKinds.map((kind) => (
               <Pill key={kind} tone="accent">

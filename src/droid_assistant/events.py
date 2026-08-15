@@ -36,6 +36,11 @@ class EventType(StrEnum):
     SPEAKER_CHANGED = "speaker.changed"
     TRANSLATION_FINAL = "translation.final"
     TRANSCRIPT_EDITED = "transcript.edited"
+    #: A line was flagged, or unflagged, as a moment to come back to
+    #: (FR-CAP-18). Deliberately its own type rather than a re-published
+    #: `utterance.final`: marking changes no text, and dispatching it as a
+    #: final would re-run every plugin subscribed to one.
+    UTTERANCE_MARKED = "utterance.marked"
     ARTIFACT_CREATED = "artifact.created"
     CAPTURE_ERROR = "capture.error"
     PLUGIN_ERROR = "plugin.error"

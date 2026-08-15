@@ -395,6 +395,16 @@ function applyEvent(set: Setter, get: Getter, event: ServerEvent): void {
       break
     }
 
+    case 'utterance.marked': {
+      // Both the Mark button and a click on a line arrive here, so the flag
+      // shows up live wherever it was set from.
+      const utterances = get().utterances.map((u) =>
+        u.utterance_id === data.utterance_id ? { ...u, marked: Boolean(data.marked) } : u,
+      )
+      set({ utterances })
+      break
+    }
+
     case 'transcript.edited': {
       const utterances = get().utterances.map((u) =>
         u.utterance_id === data.utterance_id ? { ...u, text: data.text as string, edited: true } : u,

@@ -61,6 +61,8 @@ export interface Session {
   dropped_chunks: number
   speaker_count?: number
   artifact_kinds?: string[]
+  /** How many lines were flagged as moments to come back to (FR-CAP-18). */
+  marked_count?: number
   utterance_count?: number
   live?: boolean
   utterances?: Utterance[]

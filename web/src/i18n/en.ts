@@ -86,6 +86,7 @@ export const en = {
     noResultsAction: 'Clear the filters, or try a different phrase.',
     speakerCount: (n: number) => `${n} speaker${n === 1 ? '' : 's'}`,
     noArtifacts: 'no artifacts',
+    markedCount: (n: number) => `⚑ ${n} marked`,
     summarise: 'Summarise',
     summarising: 'Summarising…',
     live: 'Recording now',
@@ -130,6 +131,9 @@ export const en = {
     actionItemFromLine: 'Make an action item from this line',
     actionItemAgain: 'This line is already an action item — click to add another',
     editLine: 'Correct this line',
+    markLine: 'Mark this as a moment to come back to',
+    unmarkLine: 'Remove the mark',
+    markedMoment: 'Marked moment',
     actionItemAdded: (n: number) =>
       `Added ${n} action item${n === 1 ? '' : 's'} — see the Action items tab`,
     actionItemNothing: 'Nothing to act on in that line.',

@@ -142,3 +142,33 @@ test.describe('Summary', () => {
     await expect(page.getByRole('button', { name: /Generate summary/i })).toBeVisible()
   })
 })
+
+test.describe('Marked moments', () => {
+  test('one click marks a line, another clears it', async ({ page }) => {
+    // FR-CAP-18 shipped as a database column: the Mark button set it, a 12 px
+    // glyph showed it, no other view heard about it, and no line could be
+    // marked after the fact. All three are what these assert.
+    await recordAndOpen(page)
+    const line = page.locator('article[data-utt]').first()
+    const flag = line.locator('button[aria-label*="Mark this"]')
+
+    await expect(flag).toBeVisible()
+    await flag.click()
+    await expect(page.locator('article[data-marked]')).toHaveCount(1)
+
+    await line.locator('button[aria-label="Remove the mark"]').click()
+    await expect(page.locator('article[data-marked]')).toHaveCount(0)
+  })
+
+  test('the history row says a recording holds one', async ({ page }) => {
+    await recordAndOpen(page)
+    await page.locator('article[data-utt] button[aria-label*="Mark this"]').first().click()
+    await expect(page.locator('article[data-marked]')).toHaveCount(1)
+
+    // The half of FR-CAP-18 that was missing: findable without opening every
+    // recording in turn.
+    // The detail view has its own "‹ History" back button, so name the nav one.
+    await page.getByRole('button', { name: 'History', exact: true }).click()
+    await expect(page.locator('[data-session-id]').first()).toContainText('1 marked')
+  })
+})

@@ -189,6 +189,14 @@ export function Record({ onOpenSession }: { onOpenSession: (id: string) => void 
           }
           actionItemBusyId={actionItems.busyId}
           actionItemSources={actionItems.sources}
+          // The flag comes back on the event stream, so the line updates from
+          // the same path the Mark button uses rather than from local state.
+          onToggleMark={
+            sessionId
+              ? (utterance) =>
+                  void api.editUtterance(utterance.utterance_id, { marked: !utterance.marked })
+              : undefined
+          }
           emptyTitle={recording ? strings.record.emptyTranscript : strings.record.idle}
           emptyAction={recording ? undefined : 'Press Record when you are ready.'}
         />

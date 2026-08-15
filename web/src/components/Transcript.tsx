@@ -49,6 +49,11 @@ interface Props {
    * if the list is later regenerated from the whole conversation.
    */
   actionItemSources?: ReadonlySet<string>
+  /**
+   * Flags this line as a moment worth returning to, or clears the flag
+   * (FR-CAP-18). Absent where there is no session to store it against.
+   */
+  onToggleMark?: (utterance: Utterance) => void
   emptyTitle?: string
   emptyAction?: string
 }
@@ -70,6 +75,7 @@ export function Transcript({
   onActionItem,
   actionItemBusyId,
   actionItemSources,
+  onToggleMark,
   emptyTitle,
   emptyAction,
 }: Props) {
@@ -140,9 +146,14 @@ export function Transcript({
             <article
               key={utterance.utterance_id}
               data-utt={utterance.utterance_id}
+              data-marked={utterance.marked || undefined}
+              // A marked moment has to be findable while scrolling past it. As a
+              // 12 px flag in the header it was no more visible than any other
+              // line, which is most of why the feature went unused: the tint and
+              // the thicker rule are what make it carry at a glance.
               className={`group mb-3 border-l-2 pl-3 transition-colors ${
-                activeUtteranceId === utterance.utterance_id ? 'bg-accent/10 rounded-r' : ''
-              }`}
+                utterance.marked ? 'bg-warn/10 rounded-r border-l-4' : ''
+              } ${activeUtteranceId === utterance.utterance_id ? 'bg-accent/10 rounded-r' : ''}`}
               style={{ borderColor: colour.bar }}
             >
               <header className="mb-0.5 flex items-baseline gap-2">
@@ -169,8 +180,18 @@ export function Transcript({
                     a desktop; hover-revealed they did not exist at all on a
                     phone. Dimmed rather than hidden is the compromise the
                     history list already settled on. */}
-                {!isEditing && (onEdit || onActionItem) && (
+                {!isEditing && (onEdit || onActionItem || onToggleMark) && (
                   <span className="flex items-center gap-0.5">
+                    {onToggleMark && (
+                      <LineAction
+                        onClick={() => onToggleMark(utterance)}
+                        label={
+                          utterance.marked ? strings.session.unmarkLine : strings.session.markLine
+                        }
+                        icon={<FlagIcon raised={utterance.marked} />}
+                        active={utterance.marked}
+                      />
+                    )}
                     {onActionItem && (
                       <LineAction
                         onClick={() => onActionItem(utterance)}
@@ -200,7 +221,13 @@ export function Transcript({
                   </span>
                 )}
 
-                {utterance.marked && <span title="Marked moment">⚑</span>}
+                {/* A mark with no toggle is still worth showing — the Record
+                    view before a session exists, say. */}
+                {utterance.marked && !onToggleMark && (
+                  <span className="text-warn" title={strings.session.markedMoment}>
+                    <FlagIcon raised />
+                  </span>
+                )}
                 {utterance.edited && <span className="text-fg-dim text-xs">{strings.session.edited}</span>}
               </header>
 
@@ -303,6 +330,15 @@ function TaskIcon({ done = false }: { done?: boolean }) {
         fill={done ? 'currentColor' : 'none'}
       />
       <path d="M5.5 8.2l1.8 1.8 3.2-3.6" stroke={done ? 'var(--color-surface-1)' : undefined} />
+    </svg>
+  )
+}
+
+function FlagIcon({ raised = false }: { raised?: boolean }) {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden {...ICON}>
+      <path d="M4 14V2.6" />
+      <path d="M4 3.2h7.6l-1.7 2.6 1.7 2.6H4z" fill={raised ? 'currentColor' : 'none'} />
     </svg>
   )
 }

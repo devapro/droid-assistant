@@ -110,6 +110,14 @@ async def list_sessions(
                         (record.id,),
                         default=0,
                     ),
+                    # FR-CAP-18's other half. A mark is worth nothing if the
+                    # only way to find the recording holding it is to open every
+                    # recording, so the count travels with the row.
+                    "marked_count": await services.db.fetch_value(
+                        "SELECT count(*) FROM utterances WHERE session_id = ? AND marked = 1",
+                        (record.id,),
+                        default=0,
+                    ),
                     "live": record.id in services.sessions.active_ids,
                 }
             )
@@ -252,8 +260,13 @@ async def edit_utterance(
     if existing is None:
         raise HTTPException(status_code=404, detail="no such utterance")
 
-    if body.marked is not None:
+    if body.marked is not None and body.marked != existing.marked:
         await services.repo.update_utterance(utterance_id, marked=body.marked)
+        await services.bus.publish(
+            existing.session_id,
+            EventType.UTTERANCE_MARKED,
+            {"utterance_id": utterance_id, "marked": body.marked},
+        )
     if body.text is not None and body.text != existing.text:
         edited = await services.repo.edit_utterance_text(utterance_id, body.text)
         if edited is None:

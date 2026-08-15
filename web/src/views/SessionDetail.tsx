@@ -93,7 +93,7 @@ export function SessionDetail({
     const stream = new EventStream({
       sessionId,
       onEvent: (event) => {
-        if (['utterance.final', 'translation.final', 'artifact.created', 'session.end', 'speaker.changed'].includes(event.type)) {
+        if (['utterance.final', 'translation.final', 'artifact.created', 'session.end', 'speaker.changed', 'utterance.marked'].includes(event.type)) {
           void load()
         }
       },
@@ -122,6 +122,15 @@ export function SessionDetail({
   const edit = async (utterance: Utterance, text: string) => {
     await api.editUtterance(utterance.utterance_id, text ? { text } : {})
     await load()
+  }
+
+  const toggleMark = async (utterance: Utterance) => {
+    try {
+      await api.editUtterance(utterance.utterance_id, { marked: !utterance.marked })
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : strings.errors.generic)
+    }
   }
 
   const rename = async (speaker: Speaker) => {
@@ -311,6 +320,7 @@ export function SessionDetail({
           onActionItem={canExtract ? (utterance) => void extractActionItem(utterance) : undefined}
           actionItemBusyId={actionItems.busyId}
           actionItemSources={actionItems.sources}
+          onToggleMark={(utterance) => void toggleMark(utterance)}
           emptyTitle="This session has no transcript."
           emptyAction={session.state === 'processing' ? 'Still processing…' : undefined}
         />

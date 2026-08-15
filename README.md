@@ -109,6 +109,25 @@ Chrome and Edge on a desktop can do this. Firefox and Safari cannot. On macOS
 only *tab* audio is available, not whole-screen audio — that is an OS
 limitation, not one of this project.
 
+## Marking what matters
+
+Two different things, and it is worth knowing which you want.
+
+**A mark** is yours: *"come back to this"*. Instant, free, no model involved.
+Press **Mark** while recording to flag whatever is being said, or click the flag
+on any line at any time — during the recording or a month later. Marked lines
+are tinted in the transcript, and the history list says how many each recording
+holds, so you can find the one you are thinking of without opening all of them.
+
+**An action item** is a task somebody committed to. Click the checkbox on a line
+and the `action_items` plugin writes it up — owner and due date if the line names
+them — and adds it to that recording's list. It needs an LLM, so it costs a call
+and, on a cloud credential, sends that line to a provider. Lines already on the
+list show a filled checkbox.
+
+Marks are the cheap one. If you are not sure which you want mid-conversation,
+mark it and decide later.
+
 ## Accuracy, honestly
 
 Transcription is imperfect, and more so away from English. The targets in
