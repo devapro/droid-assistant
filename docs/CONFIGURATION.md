@@ -80,14 +80,14 @@ reasoning with a measurement.
 | `min_silence_long_ms` | `180` | That shorter pause. Must be ≤ `min_silence_ms` |
 | `force_split_after_ms` | `12000` | Past this, cut at the quietest moment seen even if no pause arrives at all |
 | `max_speech_ms` | `30000` | Absolute backstop, so a monologue is never one enormous utterance |
-| `turn_gap_ms` | `5000` | Balanced and Batch. A speaker's consecutive segments are rejoined into one message unless they paused longer than this. `0` keeps one message per segment |
+| `turn_gap_ms` | `5000` | A speaker's consecutive segments are rejoined into one message unless they paused longer than this. `0` keeps one message per segment |
 | `max_turn_ms` | `120000` | …and no rejoined message grows past this |
 
 **Why segments are rejoined.** A VAD segment is a breath, but a *message* is a
 turn: everything one person says before someone else speaks. Left as segments,
 a conversation renders as a column of one-word lines with the same name over
 each, and continuous speech renders as a new message every
-`soft_max_speech_ms`. So Balanced and Batch reassemble them, which buys two
+`soft_max_speech_ms`. So all three modes reassemble them, which buys two
 things:
 
 * the utterance already published is **updated** as its turn grows, rather than
@@ -98,8 +98,15 @@ things:
   `openai` — use it; the rest ignore it and only the joining applies.
 
 Text is only ever **appended**: nothing already on screen is rewritten, which is
-the property FR-LAT-5 exists for. Live is left alone — LocalAgreement already
-governs how its utterances settle.
+the property FR-LAT-5 exists for.
+
+**Live too.** It looks like the exception, because LocalAgreement already
+governs how its text settles — but that is about the words *inside* a segment,
+not about which message a segment belongs to, so Live fragmented exactly as the
+others did. It now assembles turns on the same VAD endpoints, and what stays
+Live's own is the partial: it is still revised in place as you speak, still
+carries no speaker (FR-DIA-10), and still disappears the moment the endpoint's
+text lands — in the message above it where the same person is still talking.
 
 **A segment is not one speaker, either.** VAD hears speech and silence, not
 people, so an interruption or a handover mid-sentence comes back as one segment
@@ -382,12 +389,12 @@ start with any cloud ASR backend, and the UI marks such sessions.
 | `backend` | `"sherpa"` | `sherpa` \| `pyannote` \| `mock`. `pyannote` is more accurate and needs a Hugging Face token plus two gated licence acceptances |
 | `min_speakers` / `max_speakers` | `null` | `null` infers the count (FR-DIA-2). Setting both to the same value pins it, which is the single most effective correction for a known group (FR-DIA-3) |
 | `clustering_threshold` | `0.5` | Lower merges two people into one label; higher fragments one person across several |
-| `window_ms` | `30000` | Balanced only. How much of the recent recording to diarize before recognising each segment. `0` turns it off |
+| `window_ms` | `30000` | Live and Balanced. How much of the recent recording to diarize before recognising each segment. `0` turns it off |
 
-**Why Balanced diarizes a window.** Batch diarizes the whole session at once,
-which is the accurate answer. Balanced cannot — most of the session has not
-happened yet — so before recognising a segment it diarizes the last
-`window_ms` of audio. Two things depend on that and nothing else can supply
+**Why the live modes diarize a window.** Batch diarizes the whole session at
+once, which is the accurate answer. Live and Balanced cannot — most of the
+session has not happened yet — so before recognising a segment they diarize the
+last `window_ms` of audio. Two things depend on that and nothing else can supply
 them:
 
 * **whether a segment holds two people**, so the handover can be cut at the
@@ -403,9 +410,12 @@ numbers only separate the voices inside that window and are not comparable
 across windows. The window says *that* the speaker changed; the clusterer says
 who they are.
 
-It costs one diarizer pass per utterance, on top of recognition. Set it to `0`
-on a machine that is already struggling to keep up, and attribution falls back
-to embedding clustering alone — at the cost of both behaviours above.
+It costs one diarizer pass per utterance, on top of recognition, and in Live
+that pass sits inside the latency budget NFR-PERF-1 sets. Set it to `0` on a
+machine that is already struggling to keep up, and attribution falls back to
+embedding clustering alone — at the cost of both behaviours above. Note the
+window has to cover a whole segment to be useful, so `vad.max_speech_ms` is its
+floor rather than a number to tune down towards.
 
 ## `[translation]`
 

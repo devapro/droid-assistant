@@ -9,9 +9,11 @@ rebuilding a pipeline.
     Balanced  commit once on VAD endpoint; no partials, text only ever appended
     Batch     nothing until stop; then the whole session at once
 
-Balanced and Batch both assemble *turns*: consecutive segments from one speaker
-grow a single message rather than each becoming its own. Live does not — its
-utterances are already governed by LocalAgreement.
+All three assemble *turns*: consecutive segments from one speaker grow a single
+message rather than each becoming its own. Live is no exception, though it reads
+like one — LocalAgreement governs the words inside a segment and says nothing
+about which message the segment belongs to, so without turn assembly a Live
+transcript is a column of one-sentence messages with the same name over each.
 """
 
 from __future__ import annotations
@@ -32,9 +34,12 @@ class ModeProfile:
     #: The most audio one Live decode covers. Longer is more accurate and slower;
     #: this is the main knob R2 measures.
     window_max_ms: int = 15_000
-    #: Diarization granularity in Balanced mode: how much context around an
+    #: Diarization granularity in the live modes: how much context around an
     #: utterance the diarizer sees. Too little and speaker clustering has nothing
-    #: to work with.
+    #: to work with — and it must cover a whole segment, so `vad.max_speech_ms`
+    #: is the floor, not a target. Costs one diarizer pass per endpoint, which
+    #: Live pays inside its latency budget; `diarization.window_ms = 0` is the
+    #: way out for a machine that cannot afford it.
     diarization_window_ms: int = 30_000
     latency_target_ms: int = 4_000
 

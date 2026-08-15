@@ -1,4 +1,4 @@
-"""Turn assembly in Balanced (FR-LAT-5) and Batch (FR-LAT-6).
+"""Turn assembly in Live (FR-LAT-4), Balanced (FR-LAT-5) and Batch (FR-LAT-6).
 
 A VAD segment is a breath; a message is a turn. Two consequences are pinned
 here, because both are behaviour a reader notices immediately:
@@ -10,10 +10,12 @@ here, because both are behaviour a reader notices immediately:
   turn as its decoding prompt, which is the context a segment-at-a-time pass
   throws away.
 
-The two modes reach it from opposite directions. Batch knows the whole session
-and walks it; Balanced is mid-recording and cannot see the next segment, so it
-has to close a message on a timer instead — and never rewrite what it already
-showed.
+The three modes reach it from different directions. Batch knows the whole
+session and walks it; Balanced is mid-recording and cannot see the next segment,
+so it has to close a message on a timer instead — and never rewrite what it
+already showed. Live is Balanced plus a partial, and the partial is where its
+own tests are: which message a final joins decides whether the partial's id is
+still the right one to publish under.
 """
 
 from __future__ import annotations
@@ -252,6 +254,27 @@ async def run_balanced(
     return pipeline, events
 
 
+async def run_live(
+    settings, repo, asr, diarization, segments: list[SpeechSegment], *, translate: bool = False
+) -> tuple[SessionPipeline, list]:
+    """Drive Live's endpoint path over segments the test dictates.
+
+    Each segment is given the partial id `_live_tick` would have minted for it,
+    because what becomes of that id once a final joins a message already on
+    screen is half of what these tests are about.
+    """
+    pipeline, events = await build(
+        settings, repo, asr, diarization, LatencyMode.LIVE, translate=translate
+    )
+    span = max(segment.end_ms for segment in segments)
+    pipeline._cache = AudioBuffer(tone(span), start_ms=0)
+    for segment in segments:
+        pipeline._live_partial_id = new_id("utt")
+        pipeline._live_segment_start_ms = segment.start_ms
+        await pipeline._finalise_live_segment(segment)
+    return pipeline, events
+
+
 def endpoints(*bounds: tuple[int, int]) -> list[SpeechSegment]:
     return [SpeechSegment(start, end) for start, end in bounds]
 
@@ -479,7 +502,6 @@ class TestBalancedTurns:
             translate=True,
         )
         assert pipeline._turn is not None
-        assert pipeline._translation_queue.qsize() == 0
 
         # Ingest races ahead while recognition is still catching up. This is the
         # normal state of a local model on a busy machine and says nothing about
@@ -494,13 +516,16 @@ class TestBalancedTurns:
         await pipeline._expire_turn()
 
         assert pipeline._turn is None
-        assert pipeline._translation_queue.qsize() == 1  # …translated once, whole
 
-    async def test_a_message_still_being_added_to_is_not_translated_yet(
-        self, settings, repo
-    ) -> None:
-        """FR-TRA-9 spends one call per message, not one per breath — and half a
-        sentence would translate to the wrong half."""
+    async def test_a_growing_message_is_translated_as_it_grows(self, settings, repo) -> None:
+        """FR-TRA-4: per utterance, not batched to the end.
+
+        Queueing on turn close instead read well — a whole turn is the better
+        unit for the agreement FR-TRA-3 wants — but it meant nothing reached the
+        reader until the speaker paused for `turn_gap_ms`, or for `max_turn_ms`
+        if they never did. In Live that is the entire mode: the transcript said
+        "translating…" for two minutes.
+        """
         pipeline, _ = await run_balanced(
             settings,
             repo,
@@ -509,9 +534,115 @@ class TestBalancedTurns:
             endpoints(*BREATHS),
             translate=True,
         )
-        assert pipeline._translation_queue.qsize() == 1  # only the closed turn
+        # One request per segment, all four already asked for, with the turn
+        # still open — not one request waiting on a pause that has not come.
+        assert pipeline._translation_queue.qsize() == 4
+        assert pipeline._turn is not None
+
+        # Each request covers only what its own segment added, so the reader is
+        # never shown a re-translation of what they have already read.
+        queued = [pipeline._translation_queue.get_nowait() for _ in range(4)]
+        assert [item.text for item in queued] == SCRIPT
+        # …and the first three belong to one message, the last to another.
+        assert len({item.utterance.id for item in queued}) == 2
+
+    async def test_closing_a_turn_asks_for_nothing_more(self, settings, repo) -> None:
+        """Everything it contained was translated on the way in."""
+        pipeline, _ = await run_balanced(
+            settings,
+            repo,
+            ScriptedASR(SCRIPT),
+            ScriptedDiarization(voices=[0, 0, 0, 0]),
+            endpoints(*BREATHS),
+            translate=True,
+        )
+        before = pipeline._translation_queue.qsize()
         await pipeline._close_turn()
-        assert pipeline._translation_queue.qsize() == 2
+        assert pipeline._translation_queue.qsize() == before
+
+
+class TestLiveTurns:
+    """Live fragmented for the same reason Balanced did, behind a cause that
+    looks like an excuse not to fix it: LocalAgreement settles the words *inside*
+    a segment and has no opinion about which message the segment belongs to. So
+    the endpoint goes through turn assembly like any other, and what stays
+    Live-specific is the partial.
+    """
+
+    async def test_a_speakers_pauses_do_not_each_start_a_message(self, settings, repo) -> None:
+        asr = ScriptedASR(SCRIPT)
+        voices = ScriptedDiarization(voices=[0, 0, 0, 1])
+        pipeline, _ = await run_live(settings, repo, asr, voices, endpoints(*BREATHS))
+        await pipeline._close_turn()
+
+        stored = await repo.list_utterances(pipeline.session.id)
+        assert [u.text for u in stored] == ["понятно ну понятно все я", "счет от газпрома"]
+        assert pipeline.stats.utterances == 2
+
+    async def test_the_turn_so_far_prompts_the_endpoint_decode(self, settings, repo) -> None:
+        """The partial ticks are deliberately left unprompted; this is the one
+        decode per segment that keeps the text, so it is the one that gets the
+        context."""
+        asr = ScriptedASR(SCRIPT)
+        voices = ScriptedDiarization(voices=[0, 0, 0, 1])
+        await run_live(settings, repo, asr, voices, endpoints(*BREATHS))
+        assert asr.contexts == ["", "понятно", "понятно ну понятно", ""]
+
+    async def test_a_new_voice_starts_a_new_message(self, settings, repo) -> None:
+        asr = ScriptedASR(SCRIPT)
+        voices = ScriptedDiarization(voices=[0, 1, 0, 1])
+        pipeline, _ = await run_live(settings, repo, asr, voices, endpoints(*BREATHS))
+        await pipeline._close_turn()
+
+        stored = await repo.list_utterances(pipeline.session.id)
+        assert [u.text for u in stored] == SCRIPT
+
+    async def test_the_partial_keeps_its_id_only_where_it_opens_a_message(
+        self, settings, repo
+    ) -> None:
+        """The client holds one partial and drops it on any final, so a final
+        that lands in the previous message clears it without needing its id.
+        Handing that id over anyway would republish — and so overwrite — the
+        message the partial was sitting under.
+        """
+        pipeline, events = await build(
+            settings,
+            repo,
+            ScriptedASR(SCRIPT),
+            ScriptedDiarization(voices=[0, 0, 0, 1]),
+            LatencyMode.LIVE,
+        )
+        pipeline._cache = AudioBuffer(tone(12_000), start_ms=0)
+        minted = []
+        for segment in endpoints(*BREATHS):
+            pipeline._live_partial_id = new_id("utt")
+            minted.append(pipeline._live_partial_id)
+            await pipeline._finalise_live_segment(segment)
+        await pipeline._close_turn()
+
+        used = {data["utterance_id"] for kind, data in events if kind is EventType.UTTERANCE_FINAL}
+        # The first and last segments each opened a message and kept their id.
+        # The two in the middle joined one, and theirs went unused.
+        assert used == {minted[0], minted[3]}
+
+    async def test_a_segment_holding_two_voices_is_still_cut(self, settings, repo) -> None:
+        """Parity with Balanced: someone taking over mid-breath gives VAD one
+        segment and the diarizer two speakers, and the words are split between
+        the messages rather than all landing on whoever spoke longest."""
+        asr = ScriptedASR(["слушай давай еще не будем забывать про инфраструктурный"])
+        diarization = ScriptedDiarization(
+            [SpeakerSegment(0, 1_500, 0), SpeakerSegment(1_500, 3_000, 1)],
+            voices=[0, 1],
+        )
+        pipeline, _ = await run_live(settings, repo, asr, diarization, endpoints((0, 3_000)))
+        await pipeline._close_turn()
+
+        stored = await repo.list_utterances(pipeline.session.id)
+        assert len(stored) == 2
+        # The cut lands on a word boundary, wherever the word timings put it.
+        assert stored[0].text == "слушай давай еще не"
+        assert stored[1].text == "будем забывать про инфраструктурный"
+        assert stored[0].speaker_id != stored[1].speaker_id
 
 
 # --- the prompt itself ------------------------------------------------------

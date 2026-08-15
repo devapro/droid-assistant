@@ -104,6 +104,13 @@ class PipelineStats:
 class _PendingTranslation:
     utterance: Utterance
     source_language: str | None
+    #: The source text *this* request covers — one segment, not the whole
+    #: message. A turn is translated as it grows, so the reader sees translation
+    #: keeping pace with the speech rather than one block arriving whenever the
+    #: speaker finally pauses. FR-TRA-4 requires exactly that, and waiting for
+    #: the turn to close broke it: in Live a monologue showed "translating…" for
+    #: up to `vad.max_turn_ms`.
+    text: str
 
 
 @dataclass(slots=True)
@@ -172,8 +179,9 @@ class SessionPipeline:
         self._translation_queue: asyncio.Queue[_PendingTranslation | None] = asyncio.Queue()
         self._context: list[str] = []  # rolling source-language context (FR-TRA-3)
         self._agreement = LocalAgreement()
-        #: The message currently being added to, in the modes that assemble
-        #: turns. None between turns, and always None in Live.
+        #: The message currently being added to. None between turns. All three
+        #: modes assemble them: what differs is when a segment's text arrives,
+        #: not whether a speaker's breaths belong to one message.
         self._turn: OpenTurn | None = None
         self._live_partial_id: str | None = None
         self._live_segment_start_ms = 0
@@ -566,6 +574,7 @@ class SessionPipeline:
         embed_ms: float = 0.0,
         timings: dict[str, float] | None = None,
         latency_from_ms: int | None = None,
+        utterance_id: str | None = None,
     ) -> None:
         """Publish one segment's runs, in order.
 
@@ -574,9 +583,14 @@ class SessionPipeline:
         recording, so its answer is used directly; a window only separates the
         voices inside itself, so there the label says *that* the speaker changed
         and the embedding says who they are.
+
+        `utterance_id` is Live's partial, offered to the first message this call
+        opens so the id survives from partial to final. Only the first: the rest
+        of the segment belongs to someone else, and reusing the id there would
+        overwrite the message the partial was showing.
         """
         alone = len(runs) == 1
-        for run in runs:
+        for index, run in enumerate(runs):
             part = audio if alone else audio.slice_ms(run.segment.start_ms, run.segment.end_ms)
             vector: Embedding | None
             if alone and embedding is not None:
@@ -590,7 +604,12 @@ class SessionPipeline:
                 speaker_index = run.speaker
             attribution = await self._attribute(vector, cost, speaker_index=speaker_index)
             await self._add_to_turn(
-                run, part, attribution, timings=timings, latency_from_ms=latency_from_ms
+                run,
+                part,
+                attribution,
+                timings=timings,
+                latency_from_ms=latency_from_ms,
+                utterance_id=utterance_id if index == 0 else None,
             )
 
     async def _add_to_turn(
@@ -601,6 +620,7 @@ class SessionPipeline:
         *,
         timings: dict[str, float] | None = None,
         latency_from_ms: int | None = None,
+        utterance_id: str | None = None,
     ) -> None:
         """Grow the open message, or close it and start the next one."""
         speaker_index = attribution.speaker.index if attribution.speaker else None
@@ -616,16 +636,45 @@ class SessionPipeline:
                 utterance.timings.get("diarization_ms", 0.0) + attribution.diarization_ms, 1
             )
             await self._publish(utterance, latency_from_ms=latency_from_ms)
+            await self._queue_translation(utterance, run.result.text)
             return
 
-        # Someone else started, or the silence ran long. The previous message is
-        # over, and only now is its text final enough to translate.
+        # Someone else started, or the silence ran long.
         await self._close_turn()
         utterance = await self._build_utterance(
-            run.result, audio, timings=timings, attribution=attribution
+            run.result, audio, utterance_id=utterance_id, timings=timings, attribution=attribution
         )
         await self._publish(utterance, latency_from_ms=latency_from_ms)
         self._turn = OpenTurn.opened(utterance, speaker_index, run.result, audio, run.segment)
+        await self._queue_translation(utterance, run.result.text)
+
+    async def _queue_translation(self, utterance: Utterance, text: str) -> None:
+        """Ask for the translation of what this segment just added.
+
+        Per segment, not per turn. Translating only on turn close reads well —
+        a whole turn is the better unit for the agreement FR-TRA-3 exists to get
+        right — but it means nothing reaches the reader until the speaker pauses
+        for `vad.turn_gap_ms`, or for `vad.max_turn_ms` if they never do. That is
+        what FR-TRA-4 forbids, and in Live it is the whole mode. The rolling
+        context is what recovers most of the agreement anyway: each request is
+        given the source-language history before it.
+        """
+        text = text.strip()
+        if not text:
+            return
+        # Appended in the same order as the requests, because `_flush_translations`
+        # slices this list to find the history *preceding* its batch.
+        self._context.append(text)
+        if len(self._context) > 64:
+            del self._context[:-64]
+        if utterance.translation_state in {"pending", "done"} and self._needs_translation(
+            utterance
+        ):
+            await self._translation_queue.put(
+                _PendingTranslation(
+                    utterance=utterance, source_language=utterance.language, text=text
+                )
+            )
 
     async def _close_turn(self) -> None:
         """Finish the open message. Idempotent, so it is safe wherever a turn
@@ -728,23 +777,53 @@ class SessionPipeline:
         )
 
     async def _finalise_live_segment(self, segment: SpeechSegment) -> None:
-        """Commit the Live partial as a real utterance on the VAD endpoint."""
+        """Commit the Live partial as a real utterance on the VAD endpoint.
+
+        From here the path is Balanced's, and for the same reason: LocalAgreement
+        governs the words *inside* a segment, and has nothing to say about which
+        message the segment belongs to. Left to itself it gave every breath its
+        own line with the same name over it. So the endpoint goes through turn
+        assembly like any other — diarize the window, embed, recognise with the
+        turn so far as the prompt, then cut into runs and append.
+
+        What Live keeps of its own is the partial. The client holds one partial
+        at a time and drops it the moment a final arrives, so a final that lands
+        in the *previous* message clears it correctly without carrying its id.
+        The id is still offered, for the ordinary case where this segment starts
+        a message rather than continuing one.
+        """
         audio = self._audio_for(segment)
+        # Reset before anything can fail or return early: a partial id left set
+        # here would be handed to the next segment's final, and the id is what
+        # decides which message on screen gets overwritten.
+        self._agreement.reset()
+        partial_id, self._live_partial_id = self._live_partial_id, None
         if audio.samples.size == 0:
-            self._agreement.reset()
-            self._live_partial_id = None
             return
 
-        results = await self._transcribe(audio)
+        turns = await self._diarize_window(segment)
+        embedding, embed_ms = await self._embed(audio)
+        # Deliberately only the final decode. The partial ticks re-decode an
+        # overlapping window several times a second and LocalAgreement commits
+        # what two of them agree on; a prompt that grows underneath that changes
+        # what "agree" means mid-segment.
+        context = self._context_for(segment, self._clusterer.nearest(embedding))
+
+        results = await self._transcribe(audio, context=context)
         merged = merge_results(results)
-        self._agreement.reset()
-        partial_id = self._live_partial_id
-        self._live_partial_id = None
         if merged is None or not merged.text.strip():
             return
 
-        utterance = await self._build_utterance(merged, audio, utterance_id=partial_id)
-        await self._commit(utterance, latency_from_ms=segment.end_ms)
+        runs = self._runs_for(merged, segment, turns)
+        await self._emit_runs(
+            runs,
+            audio,
+            global_labels=False,
+            embedding=embedding,
+            embed_ms=embed_ms,
+            latency_from_ms=segment.end_ms,
+            utterance_id=partial_id,
+        )
 
     # --- Batch mode ---------------------------------------------------------
 
@@ -980,7 +1059,13 @@ class SessionPipeline:
         the moment text reaches the reader, which is what NFR-PERF-2 measures,
         and a message that grows reaches them once per segment.
         """
-        utterance.translation_state = "pending" if self._needs_translation(utterance) else "skipped"
+        if not self._needs_translation(utterance):
+            utterance.translation_state = "skipped"
+        elif utterance.translation_state == "none":
+            utterance.translation_state = "pending"
+        # A message already showing a translation keeps showing it while the
+        # next segment's is in flight. Resetting to "pending" here would blank
+        # the line and print "translating…" every time the speaker drew breath.
         await self.repo.add_utterance(utterance)
 
         if latency_from_ms is not None:
@@ -995,24 +1080,14 @@ class SessionPipeline:
         )
 
     async def _finish(self, utterance: Utterance) -> None:
-        """The half of a commit that happens exactly once, when the text has
-        stopped growing: metering, translation context, and translation itself.
+        """The half of a commit that happens exactly once: when the message has
+        stopped growing, it counts as one message.
 
-        Translating a message that is still being added to would spend a call on
-        half a sentence and then show the wrong half — and the whole turn is the
-        better unit to translate anyway, since it is the one that carries the
-        agreement FR-TRA-3 exists to get right.
+        Translation is deliberately *not* here. It is queued per segment as the
+        turn grows — see `_queue_translation` — because a reader waiting for the
+        speaker to pause is a reader watching "translating…" (FR-TRA-4).
         """
         self.stats.utterances += 1
-
-        self._context.append(utterance.text)
-        if len(self._context) > 64:
-            del self._context[:-64]
-
-        if utterance.translation_state == "pending":
-            await self._translation_queue.put(
-                _PendingTranslation(utterance=utterance, source_language=utterance.language)
-            )
 
     def _needs_translation(self, utterance: Utterance) -> bool:
         if self.translation is None or not utterance.text.strip():
@@ -1046,7 +1121,7 @@ class SessionPipeline:
                     return
 
                 pending.append(item)
-                total_chars = sum(len(p.utterance.text) for p in pending)
+                total_chars = sum(len(p.text) for p in pending)
                 if (
                     len(pending) >= config.batch_max_utterances
                     or total_chars >= config.batch_max_chars
@@ -1067,7 +1142,7 @@ class SessionPipeline:
 
         target = self.session.target_language
         source = pending[0].source_language
-        texts = [p.utterance.text for p in pending]
+        texts = [p.text for p in pending]
         # Context is the source-language history preceding this batch, which is
         # what fixes pronoun and gender agreement across turns (FR-TRA-3).
         context = self._context[: -len(pending)][-self.settings.translation.context_utterances :]
@@ -1092,10 +1167,25 @@ class SessionPipeline:
             utterance = item.utterance
             if translated is None:
                 self.stats.translation_failures += 1
-                utterance.translation_state = "failed"
-                utterance.translation = None
+                # A later segment failing must not discard the part of the turn
+                # that already translated: half a translation on screen is worth
+                # more than the failed state, and the reader can see which half.
+                if not utterance.translation:
+                    utterance.translation_state = "failed"
+                    utterance.translation = None
+                else:
+                    log.warning(
+                        "a segment of an already-translated message failed; keeping what arrived",
+                        extra={"session": self.session.id, "utterance": utterance.id},
+                    )
             else:
-                utterance.translation = translated
+                # Appended, because the message it belongs to is itself built by
+                # appending: this request covered one segment of it.
+                utterance.translation = (
+                    f"{utterance.translation} {translated}".strip()
+                    if utterance.translation
+                    else translated
+                )
                 utterance.translation_state = "done"
             utterance.timings["translation_ms"] = round(elapsed_ms, 1)
             await self.repo.update_utterance(
