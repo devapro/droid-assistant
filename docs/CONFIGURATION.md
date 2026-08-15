@@ -76,7 +76,30 @@ reasoning with a measurement.
 | `min_speech_ms` | `250` | Shorter bursts are discarded — a door closing is not an utterance |
 | `min_silence_ms` | `700` | A pause this long ends an utterance. **This is the main latency knob in Balanced mode**: every result is delayed by exactly this much |
 | `speech_pad_ms` | `200` | Padding on both edges, so no word is clipped |
-| `max_speech_ms` | `30000` | Ceiling, so a monologue is not one enormous utterance |
+| `soft_max_speech_ms` | `8000` | Past this much unbroken speech, a much shorter pause is accepted as an endpoint |
+| `min_silence_long_ms` | `180` | That shorter pause. Must be ≤ `min_silence_ms` |
+| `force_split_after_ms` | `12000` | Past this, cut at the quietest moment seen even if no pause arrives at all |
+| `max_speech_ms` | `30000` | Absolute backstop, so a monologue is never one enormous utterance |
+
+**Why three ceilings.** Conversation pauses constantly, so `min_silence_ms`
+alone segments it well. Continuous speech does not: a narrated video, a lecture,
+or anyone reading aloud can run half a minute without a single 700 ms gap, and
+waiting for one means **no transcript appears until the recording stops**.
+
+So the bar drops as an utterance runs long:
+
+| Speech so far | Ends on |
+|---|---|
+| under 8 s | a 700 ms pause — clean sentence boundaries |
+| 8–12 s | a 180 ms pause — a breath is enough |
+| over 12 s | the quietest moment since 8 s, pause or not |
+| 30 s | now, wherever that falls |
+
+The forced cut picks the quietest frame rather than firing on a timer, so it
+lands at the least bad place available instead of mid-syllable. Lower
+`soft_max_speech_ms` for a livelier transcript at some cost in accuracy —
+recognition is better with more context — and raise it if you mostly record
+conversation and prefer whole sentences.
 
 ## `[asr]`
 

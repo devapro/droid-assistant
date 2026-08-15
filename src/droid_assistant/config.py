@@ -116,8 +116,49 @@ class VADConfig(BaseModel):
     # long delays every Balanced-mode result by exactly this much.
     min_silence_ms: Annotated[int, Field(ge=0)] = 700
     speech_pad_ms: Annotated[int, Field(ge=0)] = 200
+
+    # Continuous speech — a lecture, a narrated video, anyone reading aloud —
+    # can run for a minute without a single 700 ms gap, so waiting for one
+    # means no transcript appears until the recording stops. Past this much
+    # unbroken speech the segmenter settles for a much shorter pause, cutting
+    # at a real micro-pause rather than mid-word.
+    soft_max_speech_ms: Annotated[int, Field(ge=1000)] = 8_000
+    min_silence_long_ms: Annotated[int, Field(ge=0)] = 180
+
+    # Some speech has no usable pause at all — fast narration, an auto-generated
+    # voice, a dubbed track. Past this much unbroken speech the segmenter stops
+    # waiting and cuts at the *quietest moment* it has seen since it started
+    # looking, which is the least bad place to break when there is no good one.
+    force_split_after_ms: Annotated[int, Field(ge=1000)] = 12_000
+
     # Hard ceiling so one monologue does not become one 40-minute utterance.
+    # Reached only when there is no detectable pause at all.
     max_speech_ms: Annotated[int, Field(ge=1000)] = 30_000
+
+    @model_validator(mode="after")
+    def _thresholds_ordered(self) -> Self:
+        if self.min_silence_long_ms > self.min_silence_ms:
+            raise ValueError(
+                f"vad.min_silence_long_ms ({self.min_silence_long_ms}) must be <= "
+                f"vad.min_silence_ms ({self.min_silence_ms}); it is the *more* eager "
+                "threshold used once speech has run long"
+            )
+        if self.soft_max_speech_ms > self.force_split_after_ms:
+            raise ValueError(
+                f"vad.soft_max_speech_ms ({self.soft_max_speech_ms}) must be <= "
+                f"vad.force_split_after_ms ({self.force_split_after_ms})"
+            )
+        if self.force_split_after_ms > self.max_speech_ms:
+            raise ValueError(
+                f"vad.force_split_after_ms ({self.force_split_after_ms}) must be <= "
+                f"vad.max_speech_ms ({self.max_speech_ms})"
+            )
+        if self.soft_max_speech_ms > self.max_speech_ms:
+            raise ValueError(
+                f"vad.soft_max_speech_ms ({self.soft_max_speech_ms}) must be <= "
+                f"vad.max_speech_ms ({self.max_speech_ms})"
+            )
+        return self
 
 
 class DeepgramConfig(BaseModel):

@@ -38,12 +38,18 @@ def frames(count: int) -> np.ndarray:
 
 
 def config(**kwargs) -> VADConfig:
+    """A coherent VAD config for a test, with the length thresholds kept in
+    order — the validator rejects a config where they are not."""
+    max_speech = kwargs.pop("max_speech_ms", 30_000)
     return VADConfig(
         threshold=0.5,
         min_speech_ms=kwargs.pop("min_speech_ms", 0),
         min_silence_ms=kwargs.pop("min_silence_ms", 320),  # 10 frames
         speech_pad_ms=kwargs.pop("speech_pad_ms", 0),
-        max_speech_ms=kwargs.pop("max_speech_ms", 30_000),
+        soft_max_speech_ms=kwargs.pop("soft_max_speech_ms", min(8_000, max_speech)),
+        force_split_after_ms=kwargs.pop("force_split_after_ms", min(12_000, max_speech)),
+        min_silence_long_ms=kwargs.pop("min_silence_long_ms", 180),
+        max_speech_ms=max_speech,
         **kwargs,
     )
 
@@ -99,6 +105,79 @@ class TestSegmentation:
         assert segments
         assert all(segment.truncated for segment in segments)
         assert segmenter.in_speech  # the utterance continues from the cut
+
+    def test_continuous_speech_still_produces_lines(self) -> None:
+        """The defect this exists for: a narrated video has no 700 ms pause, so
+        waiting for one meant nothing appeared until the recording stopped.
+
+        Here speech runs unbroken with a single short dip. Below the soft
+        ceiling that dip is ignored; above it, it becomes an endpoint.
+        """
+        # 300 frames of speech with one 4-frame (128 ms) dip at frame 280.
+        pattern = [True] * 280 + [False] * 4 + [True] * 200
+        segmenter = VADSegmenter(
+            config(
+                min_silence_ms=1000,  # never satisfied by a 128 ms dip
+                soft_max_speech_ms=5_000,
+                min_silence_long_ms=100,
+                force_split_after_ms=20_000,
+                max_speech_ms=60_000,
+            ),
+            ScriptedVAD(pattern),
+        )
+        segments = segmenter.feed(frames(len(pattern)))
+        assert segments, "a monologue must still produce lines while it is happening"
+        # It cut at the real dip, not at an arbitrary point on a timer.
+        assert segments[0].end_ms == 280 * 32
+
+    def test_a_short_dip_is_ignored_before_the_soft_ceiling(self) -> None:
+        """Below the ceiling the long threshold still applies, so an ordinary
+        mid-sentence breath does not split a sentence."""
+        pattern = [True] * 20 + [False] * 4 + [True] * 20 + [False] * 40
+        segmenter = VADSegmenter(
+            config(min_silence_ms=640, soft_max_speech_ms=30_000, force_split_after_ms=30_000),
+            ScriptedVAD(pattern),
+        )
+        segments = segmenter.feed(frames(len(pattern)))
+        assert len(segments) == 1
+        assert segments[0].end_ms == 44 * 32  # spans the dip
+
+    def test_speech_with_no_pause_at_all_is_split_at_its_quietest_point(self) -> None:
+        """Fast narration and dubbed tracks can have no usable pause. Cutting
+        mid-syllable wherever a timer fires is worse than cutting at the
+        least-bad moment available."""
+
+        class Varying:
+            """Always above threshold, but quietest at one known frame."""
+
+            def __init__(self, quiet_at: int) -> None:
+                self.quiet_at = quiet_at
+                self.index = 0
+
+            def reset(self) -> None:
+                self.index = 0
+
+            def probability(self, frame) -> float:
+                value = 0.55 if self.index == self.quiet_at else 0.95
+                self.index += 1
+                return value
+
+        quiet_frame = 260
+        segmenter = VADSegmenter(
+            config(
+                min_silence_ms=1000,
+                soft_max_speech_ms=5_000,
+                force_split_after_ms=10_000,
+                max_speech_ms=60_000,
+            ),
+            Varying(quiet_frame),
+        )
+        segments = segmenter.feed(frames(400))
+        assert segments
+        assert segments[0].truncated
+        assert segments[0].end_ms == quiet_frame * 32
+        # And the next utterance continues from the cut, losing no audio.
+        assert segmenter.in_speech
 
     def test_flush_closes_an_open_segment(self) -> None:
         """The last sentence before Stop is the commonest thing to lose."""

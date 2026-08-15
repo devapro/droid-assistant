@@ -152,6 +152,14 @@ class VADSegmenter:
     Hysteresis is asymmetric on purpose: speech starts on a single frame over
     threshold (so no word is clipped) but ends only after `min_silence_ms`
     continuously below it (so a pause mid-sentence does not split the utterance).
+
+    The silence threshold is itself adaptive. Continuous speech — a narrated
+    video, a lecture, anyone reading aloud — routinely runs for half a minute
+    without one 700 ms gap, and waiting for a gap that never comes means the
+    transcript appears only when the recording stops. So past
+    `soft_max_speech_ms` of unbroken speech the segmenter accepts a much
+    shorter pause. It still cuts at a real pause, just a smaller one, which is
+    far better than cutting mid-word on a timer.
     """
 
     def __init__(self, config: VADConfig, model: SpeechProbabilityModel) -> None:
@@ -163,6 +171,10 @@ class VADSegmenter:
         self._speech_start_ms = 0
         self._last_speech_ms = 0
         self._silence_ms = 0
+        # The quietest frame seen since this utterance overran, and where it
+        # was. Used only when no real pause ever arrives.
+        self._quietest_prob = 1.0
+        self._quietest_ms = 0
 
     def reset(self, position_ms: int = 0) -> None:
         self._model.reset()
@@ -170,6 +182,11 @@ class VADSegmenter:
         self._position_ms = position_ms
         self._in_speech = False
         self._silence_ms = 0
+        self._forget_split()
+
+    def _forget_split(self) -> None:
+        self._quietest_prob = 1.0
+        self._quietest_ms = 0
 
     @property
     def in_speech(self) -> bool:
@@ -192,7 +209,8 @@ class VADSegmenter:
             frame_start = self._position_ms
             self._position_ms += FRAME_MS
 
-            is_speech = self._model.probability(frame) >= self._config.threshold
+            probability = self._model.probability(frame)
+            is_speech = probability >= self._config.threshold
 
             if is_speech:
                 self._silence_ms = 0
@@ -200,11 +218,27 @@ class VADSegmenter:
                     self._in_speech = True
                     self._speech_start_ms = frame_start
                 self._last_speech_ms = frame_start + FRAME_MS
+
+                # Once an utterance has overrun, remember where it was quietest.
+                if (
+                    self._speech_length_ms >= self._config.soft_max_speech_ms
+                    and probability < self._quietest_prob
+                ):
+                    self._quietest_prob = probability
+                    self._quietest_ms = frame_start
+
                 if self._speech_length_ms >= self._config.max_speech_ms:
                     segments.append(self._close(truncated=True))
+                elif (
+                    self._speech_length_ms >= self._config.force_split_after_ms
+                    and self._quietest_ms > self._speech_start_ms
+                ):
+                    # No pause is coming. Break at the least-bad moment rather
+                    # than mid-syllable wherever the timer happened to fire.
+                    segments.append(self._close(truncated=True, at_ms=self._quietest_ms))
             elif self._in_speech:
                 self._silence_ms += FRAME_MS
-                if self._silence_ms >= self._config.min_silence_ms:
+                if self._silence_ms >= self._required_silence_ms:
                     segment = self._close(truncated=False)
                     if segment.duration_ms >= self._config.min_speech_ms:
                         segments.append(segment)
@@ -214,20 +248,35 @@ class VADSegmenter:
     def _speech_length_ms(self) -> int:
         return self._last_speech_ms - self._speech_start_ms
 
-    def _close(self, *, truncated: bool) -> SpeechSegment:
+    @property
+    def _required_silence_ms(self) -> int:
+        """How long a pause must be to end the current utterance.
+
+        Long speech lowers the bar, so a monologue still produces lines while it
+        is happening rather than one wall of text at the end.
+        """
+        if self._speech_length_ms >= self._config.soft_max_speech_ms:
+            return self._config.min_silence_long_ms
+        return self._config.min_silence_ms
+
+    def _close(self, *, truncated: bool, at_ms: int | None = None) -> SpeechSegment:
+        """Close the open utterance, optionally at an earlier point than now."""
         pad = self._config.speech_pad_ms
+        end_ms = self._last_speech_ms if at_ms is None else at_ms
         segment = SpeechSegment(
             start_ms=max(0, self._speech_start_ms - pad),
-            end_ms=self._last_speech_ms + pad,
+            end_ms=end_ms + pad,
             truncated=truncated,
         )
         self._in_speech = False
         self._silence_ms = 0
+        self._forget_split()
         if truncated:
             # Continue the same utterance from here rather than dropping the
             # audio still being spoken.
             self._in_speech = True
-            self._speech_start_ms = self._last_speech_ms
+            self._speech_start_ms = end_ms
+            self._last_speech_ms = max(self._last_speech_ms, end_ms)
         return segment
 
     def flush(self) -> SpeechSegment | None:
