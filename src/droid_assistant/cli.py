@@ -201,6 +201,97 @@ def models_download(
     console.print("[green]All models present.[/green]")
 
 
+#: Whisper fine-tunes worth trying where the stock model is weak. Listed rather
+#: than defaulted to, because a fine-tune trades breadth for depth: better on
+#: the language it was tuned for, usually worse on everything else, including
+#: code-switching. Measure before adopting one (NFR-EVAL-4).
+SPECIALISED_MODELS = {
+    "ru": [
+        ("antony66/whisper-large-v3-russian", "Russian, tuned on telephony and podcast speech"),
+        ("bond005/whisper-large-v3-ru-podlodka", "Russian, tuned on spontaneous conversation"),
+        ("dvislobokov/faster-whisper-large-v3-turbo-russian", "Russian, already CTranslate2"),
+    ],
+}
+
+
+@models_app.command("suggest")
+def models_suggest(
+    language: Annotated[str | None, typer.Option(help="BCP-47 code, e.g. ru")] = None,
+) -> None:
+    """List community models specialised for a language.
+
+    Whisper's multilingual capacity is heavily weighted to English, and the gap
+    widens as the model shrinks. A specialised model can close it — but it is a
+    trade, not a free win, so measure it against your own audio with
+    `droid-assistant eval` before switching.
+    """
+    codes = [language] if language else sorted(SPECIALISED_MODELS)
+    for code in codes:
+        entries = SPECIALISED_MODELS.get(code)
+        if not entries:
+            err.print(f"[yellow]No suggestions recorded for {code!r}.[/yellow]")
+            continue
+        table = Table(title=f"Specialised models for {code}")
+        table.add_column("Model")
+        table.add_column("Notes")
+        for name, note in entries:
+            table.add_row(name, note)
+        console.print(table)
+    console.print(
+        "\n[dim]Already in CTranslate2 format: set asr.model to the name.\n"
+        "A plain Hugging Face model: convert it first with "
+        "`droid-assistant models convert <name>`.\n"
+        "Either way, measure it: droid-assistant eval --backends "
+        "faster_whisper:large-v3-turbo,faster_whisper:<the-new-one>[/dim]"
+    )
+
+
+@models_app.command("convert")
+def models_convert(
+    model: Annotated[str, typer.Argument(help="Hugging Face model id or local path")],
+    config: ConfigOption = None,
+    quantization: Annotated[
+        str, typer.Option(help="int8, int8_float16, float16, float32")
+    ] = "int8",
+) -> None:
+    """Convert a Hugging Face Whisper model to CTranslate2.
+
+    `faster-whisper` runs CTranslate2, not Transformers, so a fine-tune
+    published in the usual Hugging Face format has to be converted once before
+    it can be used. After this, set `asr.model` to the printed path.
+    """
+    settings = _settings(config)
+    settings.ensure_dirs()
+    target = settings.models_dir / f"{model.replace('/', '--')}-ct2"
+
+    if target.exists():
+        console.print(f"[green]Already converted:[/green] {target}")
+        return
+
+    try:
+        from ctranslate2.converters import TransformersConverter
+    except ImportError as exc:
+        err.print("[red]Conversion needs CTranslate2 and Transformers:[/red] uv sync --extra local")
+        raise typer.Exit(2) from exc
+
+    console.print(f"Converting [bold]{model}[/bold] → {target}")
+    console.print("[dim]This downloads the full model once; it is slow the first time.[/dim]")
+    try:
+        TransformersConverter(
+            model, copy_files=["tokenizer.json", "preprocessor_config.json"]
+        ).convert(str(target), quantization=quantization)
+    except Exception as exc:
+        err.print(f"[red]Conversion failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    console.print(f'\n[green]Done.[/green] Use it with:\n  asr.model = "{target}"')
+    console.print(
+        "[dim]Then measure it rather than assuming:\n"
+        "  droid-assistant eval --backends "
+        f"faster_whisper:large-v3-turbo,faster_whisper:{target}[/dim]"
+    )
+
+
 @models_app.command("list")
 def models_list(config: ConfigOption = None) -> None:
     """Show what is on disk."""

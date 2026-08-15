@@ -16,6 +16,10 @@ import { defineConfig, devices } from '@playwright/test'
  */
 export default defineConfig({
   testDir: './e2e',
+  // The suite needs a fast model, not a good one. It is pinned here rather
+  // than in `.env`, because an override left in `.env` silently becomes the
+  // model real recordings use — which is exactly what happened once.
+  globalSetup: './e2e/global-setup.ts',
   // Recognition is not instant, and these assertions wait on a real model.
   timeout: 120_000,
   expect: { timeout: 45_000 },

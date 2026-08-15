@@ -106,7 +106,7 @@ conversation and prefer whole sentences.
 | Field | Default | Notes |
 |---|---|---|
 | `backend` | `"faster_whisper"` | `faster_whisper` \| `whisper_cpp` \| `deepgram` \| `openai` \| `mock` |
-| `model` | `"large-v3-turbo"` | Tier A. Use `medium`/`small` int8 on Tier B, `small` on Tier C |
+| `model` | `"large-v3-turbo"` | Tier A. Use `medium`/`small` int8 on Tier B, `small` on Tier C. **Size matters much more for non-English** — see below. Can also be a path to a converted fine-tune |
 | `device` | `"auto"` | `auto` \| `cpu` \| `cuda` \| `metal`. CTranslate2 has no Metal path — use `whisper_cpp` on a Mac to reach the GPU |
 | `compute_type` | `"auto"` | `int8` on CPU, `float16` on CUDA |
 | `beam_size` | `5` | Lower is faster and slightly worse |
@@ -114,6 +114,36 @@ conversation and prefer whole sentences.
 | `condition_on_previous_text` | `false` | `true` amplifies hallucination loops. Leave it off |
 | `word_timestamps` | `true` | Needed for click-to-seek (FR-ASR-5) |
 | `serbian_script` | `"latin"` | `latin` \| `cyrillic`. Output is normalised to one script (FR-ASR-10) |
+
+**Choosing a size for a non-English language.** Whisper's multilingual capacity
+is weighted towards English, so the smaller models degrade far faster away from
+it. Measured on a small Russian set with `droid-assistant eval`:
+
+| Model | English WER | Russian WER | RTF |
+|---|---|---|---|
+| `tiny` | 0.0% | 19.7% | 0.05 |
+| `base` | 0.0% | 9.8% | 0.07 |
+| `small` | 0.0% | 4.9% | 0.20 |
+
+English barely moves; Russian improves fourfold. Do not economise on model size
+for a non-English language — and measure on your own audio, since these are
+clean synthetic recordings and optimistic in absolute terms.
+
+For a language where the stock model is still weak, `droid-assistant models
+suggest --language ru` lists community fine-tunes. A fine-tune published in the
+usual Hugging Face format needs converting once:
+
+```bash
+droid-assistant models convert antony66/whisper-large-v3-russian
+# then set asr.model to the printed path
+```
+
+A fine-tune is a trade, not a free win: better on its language, usually worse on
+everything else, and typically worse at code-switching. Compare before adopting:
+
+```bash
+droid-assistant eval --backends faster_whisper:large-v3-turbo,faster_whisper:<path>
+```
 
 ### `[asr.deepgram]`
 

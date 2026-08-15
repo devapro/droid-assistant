@@ -116,10 +116,31 @@ Transcription is imperfect, and more so away from English. The targets in
 your own recordings, not promises — run `droid-assistant eval` against the
 corpus in `eval/corpus/` to get real numbers for your hardware and your voices.
 
+**Model size matters far more away from English.** Whisper's multilingual
+capacity is heavily weighted towards English, and the gap widens sharply as the
+model shrinks. Measured with `droid-assistant eval` on a small Russian set:
+
+| Model | English WER | Russian WER |
+|---|---|---|
+| `tiny` | 0.0% | 19.7% |
+| `base` | 0.0% | 9.8% |
+| `small` | 0.0% | 4.9% |
+
+English is unaffected by size here; Russian is transformed by it. So if Russian
+looks much worse than English, **check which model you are running first** —
+`GET /api/health` reports it. Those figures come from clean synthetic speech and
+are optimistic in absolute terms; the *ratio* between sizes is the point.
+
+If the stock model is still not good enough for your language, try a specialised
+fine-tune — `droid-assistant models suggest --language ru` lists some — and
+measure it against your own recordings rather than trusting anyone's benchmark.
+
 Serbian is the largest open question, and Russian–English code-switching is
 likely to bite harder in daily use: speech recognition detects **one language
 per window**, so a sentence that mixes languages will come out in whichever one
-the model picks. Pin a single language per session where you can.
+the model picks. Pin a single language per session where you can. Note that a
+language-specialised model usually makes code-switching *worse*, not better —
+it is tuned to expect one language.
 
 The product answer to all of this is correction, not denial: transcripts are
 editable, plugins re-run over the corrected text, and custom vocabulary is
