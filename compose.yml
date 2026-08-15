@@ -23,6 +23,11 @@ services:
       DROID_SERVER__HOST: 0.0.0.0
       DROID_ASR__BACKEND: ${DROID_ASR_BACKEND:-faster_whisper}
       DROID_ASR__MODEL: ${DROID_ASR_MODEL:-large-v3-turbo}
+      # Extra models to keep on the volume so they can be picked from
+      # Settings → Speech models without a wait. Whatever the configuration
+      # actually routes to is fetched regardless of this list.
+      DROID_ASR__PRELOAD: ${DROID_ASR_PRELOAD:-}
+      DROID_ASR__DOWNLOAD_MISSING: ${DROID_ASR_DOWNLOAD_MISSING:-false}
     env_file:
       - path: .env
         required: false

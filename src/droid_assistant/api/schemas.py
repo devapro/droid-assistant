@@ -77,6 +77,13 @@ class PresetRequest(BaseModel):
     config: dict[str, Any]
 
 
+class ModelDownloadRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    #: `backend:model`, or a bare model name meaning the configured backend.
+    id: str = Field(min_length=1, max_length=200)
+
+
 class ConfigPatchRequest(BaseModel):
     """Runtime-mutable configuration only.
 
@@ -89,6 +96,11 @@ class ConfigPatchRequest(BaseModel):
 
     asr_backend: str | None = None
     asr_model: str | None = None
+    #: Per-language routing, as `{"ru": "gigaam:v3-rnnt"}` (FR-ASR-7). Merged
+    #: into the existing map rather than replacing it, so a UI editing one row
+    #: does not have to send the others back; `""` removes an entry, which is
+    #: how "use the default for this language" is expressed.
+    asr_by_language: dict[str, str] | None = None
     translation_backend: str | None = None
     llm_model: str | None = None
     llm_base_url: str | None = None

@@ -142,6 +142,30 @@ export interface Health {
   warnings: string[]
 }
 
+/** One entry from `GET /api/models` (FR-ASR-1, FR-ASR-7). */
+export interface ModelInfo {
+  id: string
+  backend: string
+  model: string
+  /** present/absent are about weights on disk; ready/unavailable are about a cloud credential. */
+  state: 'present' | 'absent' | 'downloading' | 'failed' | 'ready' | 'unavailable'
+  local: boolean
+  size_mb: number
+  note: string
+  /** null ⇒ no language restriction. A list ⇒ exactly those, and nothing else. */
+  languages: string[] | null
+  error: string | null
+}
+
+export interface ModelsResponse {
+  models: ModelInfo[]
+  default: string
+  routing: Record<string, { id: string; explicit: boolean }>
+  languages: string[]
+  models_dir: string
+  note: string
+}
+
 export interface ModeInfo {
   mode: 'live' | 'balanced' | 'batch'
   description: string
@@ -292,6 +316,14 @@ export const api = {
     request<{ config: Record<string, never>; applies_to: string }>('/api/config', {
       method: 'PATCH',
       body: JSON.stringify(body),
+    }),
+
+  models: () => request<ModelsResponse>('/api/models'),
+
+  downloadModel: (id: string) =>
+    request<{ id: string; state: string }>('/api/models/download', {
+      method: 'POST',
+      body: JSON.stringify({ id }),
     }),
 
   presets: () => request<{ presets: Preset[] }>('/api/presets'),

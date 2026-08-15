@@ -16,6 +16,8 @@ services:
       DROID_ASR__DEVICE: cuda
       DROID_ASR__COMPUTE_TYPE: float16
       DROID_ASR__MODEL: ${DROID_ASR_MODEL:-large-v3-turbo}
+      DROID_ASR__PRELOAD: ${DROID_ASR_PRELOAD:-}
+      DROID_ASR__DOWNLOAD_MISSING: ${DROID_ASR_DOWNLOAD_MISSING:-false}
     deploy:
       resources:
         reservations:

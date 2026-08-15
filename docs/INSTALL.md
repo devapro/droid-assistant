@@ -23,8 +23,13 @@ git clone https://github.com/arsenii/droid-assistant
 cd droid-assistant
 cp .env.example .env       # set OPENAI_API_KEY for translation and plugins
 docker compose up -d
-docker compose exec droid-assistant uv run droid-assistant models download
+docker compose exec droid-assistant droid-assistant models download
 ```
+
+`models download` fetches everything the configuration routes to — the default
+model plus anything `asr.by_language` points at — so the list never has to be
+maintained by hand. `droid-assistant models list` shows what is on disk and what
+uses it. Both are also in the browser, under Settings → Speech models.
 
 With an NVIDIA GPU, use `docker compose -f compose.cuda.yml up -d` instead. It
 needs the NVIDIA Container Toolkit on the host.
@@ -158,6 +163,12 @@ If the transcript is empty, run `doctor` again — the usual causes are a missin
 VAD model and a muted microphone, and both are reported there.
 
 ## Troubleshooting
+
+**Russian (or any non-English language) transcribes badly.** Model size matters
+far more away from English, and a language-specialised model can beat Whisper
+outright on its own language. Open Settings → Speech models, download one, and
+route just that language to it — English keeps the multilingual model. See
+[CONFIGURATION.md](./CONFIGURATION.md#asrby_language--a-different-engine-per-language).
 
 **The first start takes ages and Settings says the model is loading.** That is
 a first run downloading the speech model — `large-v3-turbo` is about 1.5 GB. The

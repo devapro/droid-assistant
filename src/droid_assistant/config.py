@@ -25,6 +25,7 @@ from typing import Annotated, Any, Literal, Self
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
+    NoDecode,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
     TomlConfigSettingsSource,
@@ -293,6 +294,57 @@ class ASRConfig(BaseModel):
     #   [asr.by_language.ru]
     #   backend = "gigaam"
     by_language: dict[str, LanguageASROverride] = Field(default_factory=dict)
+
+    #: Extra `backend:model` ids to keep on disk, beyond the ones this
+    #: configuration routes to. The download set is otherwise *derived* from
+    #: `model` and `by_language` — a separate list of what to fetch drifts out of
+    #: step with what is actually used, and the failure shows up mid-recording.
+    #: What this adds is the models you want to be able to *switch to* from the
+    #: UI without waiting for a download.
+    #:
+    #:   preload = ["faster_whisper:small", "gigaam:v3-rnnt"]
+    #:
+    #: In `.env`, where JSON is unpleasant, a comma-separated string also works:
+    #:   DROID_ASR__PRELOAD=faster_whisper:small,gigaam:v3-rnnt
+    #:
+    #: `NoDecode` is what makes that second form work. Without it,
+    #: pydantic-settings JSON-decodes any list-typed field inside the *env
+    #: source*, before a validator can be reached — so the comma-separated
+    #: value did not fall back to a split, it took the whole server down at
+    #: startup with a parse error.
+    preload: Annotated[list[str], NoDecode] = Field(default_factory=list)
+
+    #: Fetch any missing model in the routing set on start, in the background.
+    #: Off by default: on a fresh volume this is a multi-gigabyte download, and
+    #: it should be a decision rather than a surprise. The server serves
+    #: throughout either way — downloading never blocks the socket.
+    download_missing: bool = False
+
+    @field_validator("preload", mode="before")
+    @classmethod
+    def _split_preload(cls, v: Any) -> Any:
+        """Accept a JSON list or a comma-separated string.
+
+        JSON is what every other list field in this config takes from the
+        environment, so it has to keep working here — `NoDecode` turned that
+        off, and this puts it back. Comma-separated is the form that is
+        pleasant to type in `.env`, which is where this field is actually set.
+        """
+        if not isinstance(v, str):
+            return v
+        text = v.strip()
+        if text.startswith("["):
+            import json
+
+            try:
+                return json.loads(text)
+            except ValueError as exc:
+                raise ValueError(
+                    f"asr.preload looks like JSON but does not parse: {exc}. Either give valid "
+                    'JSON (["faster_whisper:small"]) or a comma-separated list '
+                    "(faster_whisper:small,gigaam:v3-rnnt)"
+                ) from exc
+        return [part.strip() for part in text.split(",") if part.strip()]
 
     def for_language(self, language: str | None) -> tuple[str, str]:
         """Resolve `(backend, model)` for a session's language."""

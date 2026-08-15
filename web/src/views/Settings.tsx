@@ -11,14 +11,21 @@
  */
 
 import { useEffect, useState } from 'react'
-import { api, type Health, type JsonSchemaProperty, type PluginInfo } from '../api/client'
+import {
+  api,
+  type Health,
+  type JsonSchemaProperty,
+  type ModelInfo,
+  type ModelsResponse,
+  type PluginInfo,
+} from '../api/client'
 import { listInputDevices, type DeviceInfo } from '../capture/recorder'
 import { sourceSupport, type CaptureSource } from '../capture/sources'
 import { Button, EmptyState, Pill } from '../components/primitives'
 import { t } from '../i18n'
 import { useRecording } from '../state/recording'
 
-type Section = 'capture' | 'backends' | 'plugins' | 'server'
+type Section = 'capture' | 'models' | 'backends' | 'plugins' | 'server'
 
 export function Settings() {
   const strings = t()
@@ -54,6 +61,7 @@ export function Settings() {
 
   const sections: [Section, string][] = [
     ['capture', strings.settings.capture],
+    ['models', strings.settings.models],
     ['backends', strings.settings.backends],
     ['plugins', strings.settings.plugins],
     ['server', strings.settings.server],
@@ -85,6 +93,7 @@ export function Settings() {
         {unreachable && <ServerProblem onRetry={refresh} />}
         {health?.models?.state === 'loading' && <ModelsLoading detail={health.models.detail} />}
         {section === 'capture' && <CaptureSection devices={devices} />}
+        {section === 'models' && <ModelsSection unreachable={unreachable} onChanged={refresh} />}
         {section === 'backends' && (
           <BackendsSection
             health={health}
@@ -209,6 +218,225 @@ function ModelsLoading({ detail }: { detail: string }) {
       <p className="mt-0.5 text-xs opacity-90">{detail || strings.settings.modelsLoadingRemedy}</p>
     </div>
   )
+}
+
+/**
+ * Speech models (FR-ASR-1, FR-ASR-7).
+ *
+ * The decision this screen exists for is not "which model is best" — it is
+ * "which model for which language", because the answer genuinely differs and
+ * the operator had no way to express it without editing config.toml and
+ * restarting. A model has to be on this server before it can be selected, so
+ * the picker offers what is present and the rest is a download away.
+ */
+function ModelsSection({
+  unreachable,
+  onChanged,
+}: {
+  unreachable: boolean
+  onChanged: () => Promise<void>
+}) {
+  const strings = t()
+  const [data, setData] = useState<ModelsResponse | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState<string | null>(null)
+
+  const load = async () => {
+    const result = await api.models().catch(() => null)
+    if (result) setData(result)
+  }
+
+  useEffect(() => {
+    void load()
+  }, [])
+
+  // A download runs for minutes on the server with no event of its own, so the
+  // only honest way to show it finishing is to keep asking. Polling stops the
+  // moment nothing is in flight.
+  const downloading = data?.models.some((m) => m.state === 'downloading') ?? false
+  useEffect(() => {
+    if (!downloading) return
+    const timer = setInterval(() => void load(), 3000)
+    return () => clearInterval(timer)
+  }, [downloading])
+
+  if (!data) {
+    return unreachable ? null : <p className="text-fg-dim text-sm">{strings.common.loading}</p>
+  }
+
+  const apply = async (body: Record<string, unknown>) => {
+    setBusy(true)
+    try {
+      const result = await api.patchConfig(body)
+      setMessage(result.applies_to)
+      await load()
+      await onChanged()
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : strings.errors.generic)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const startDownload = async (id: string) => {
+    // Mark it locally so the button changes on the first click rather than on
+    // the next poll — three seconds of an unchanged button reads as ignored.
+    setData({
+      ...data,
+      models: data.models.map((m) => (m.id === id ? { ...m, state: 'downloading' } : m)),
+    })
+    await api.downloadModel(id).catch(() => null)
+    await load()
+  }
+
+  const usable = (model: ModelInfo) => model.state === 'present' || model.state === 'ready'
+
+  return (
+    <div className="flex flex-col gap-6">
+      <Field label={strings.settings.defaultModel} help={strings.settings.defaultModelHelp}>
+        <ModelSelect
+          models={data.models.filter((m) => usable(m) || m.id === data.default)}
+          value={data.default}
+          disabled={busy}
+          onChange={(id) => {
+            const model = data.models.find((m) => m.id === id)
+            if (model) void apply({ asr_backend: model.backend, asr_model: model.model })
+          }}
+        />
+      </Field>
+
+      <Field label={strings.settings.perLanguage} help={strings.settings.perLanguageHelp}>
+        <div className="flex flex-col gap-2">
+          {data.languages.map((code) => {
+            const route = data.routing[code]
+            const choices = data.models.filter(
+              // A model that cannot recognise this language must not be
+              // offered for it: handed the wrong language it does not fail,
+              // it returns fluent nonsense.
+              (m) => (usable(m) || m.id === route?.id) && (m.languages === null || m.languages.includes(code)),
+            )
+            return (
+              <div key={code} className="flex items-center gap-3">
+                <span className="w-28 shrink-0 text-sm">{languageName(code)}</span>
+                <ModelSelect
+                  models={choices}
+                  value={route?.explicit ? route.id : ''}
+                  disabled={busy}
+                  // Not "use default — <name>": the default is named in full
+                  // three rows above, and repeating it here only truncated.
+                  placeholder={strings.settings.useDefault}
+                  onChange={(id) => void apply({ asr_by_language: { [code]: id } })}
+                />
+              </div>
+            )
+          })}
+        </div>
+      </Field>
+
+      {message && <p className="text-fg-dim text-sm">{message}</p>}
+
+      <Field label={strings.settings.availableModels} help={strings.settings.availableModelsHelp}>
+        <div className="flex flex-col gap-2">
+          {data.models.map((model) => (
+            <ModelRow key={model.id} model={model} onDownload={() => void startDownload(model.id)} />
+          ))}
+        </div>
+      </Field>
+
+      <p className="text-fg-dim font-mono text-xs">
+        {strings.settings.modelsDir}: {data.models_dir}
+      </p>
+    </div>
+  )
+}
+
+function ModelSelect({
+  models,
+  value,
+  onChange,
+  disabled,
+  placeholder,
+}: {
+  models: ModelInfo[]
+  value: string
+  onChange: (id: string) => void
+  disabled?: boolean
+  placeholder?: string
+}) {
+  return (
+    <select
+      value={value}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.value)}
+      className="bg-surface-2 border-line w-full rounded-lg border px-3 py-2 disabled:opacity-50"
+    >
+      {placeholder !== undefined && <option value="">{placeholder}</option>}
+      {/* The name only. A native select cannot wrap, so appending each model's
+          note truncated every option mid-sentence — and the notes are already
+          right below, in full, on the same screen. */}
+      {models.map((model) => (
+        <option key={model.id} value={model.id}>
+          {label(model.id)}
+        </option>
+      ))}
+    </select>
+  )
+}
+
+function ModelRow({ model, onDownload }: { model: ModelInfo; onDownload: () => void }) {
+  const strings = t()
+  const tone = { present: 'good', ready: 'good', downloading: 'warn', failed: 'bad' } as const
+  const stateLabel = {
+    present: `${strings.settings.onDisk} · ${model.size_mb} MB`,
+    ready: strings.settings.cloudReady,
+    absent: strings.settings.notDownloaded,
+    downloading: strings.settings.downloading,
+    failed: 'failed',
+    unavailable: strings.settings.noCredential,
+  }[model.state]
+
+  return (
+    <div className="border-line bg-surface-2 flex items-center gap-3 rounded-xl border p-3">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-mono text-sm">{label(model.id)}</span>
+          <Pill tone={tone[model.state as keyof typeof tone] ?? 'neutral'}>{stateLabel}</Pill>
+          {model.languages !== null && model.languages.length <= 4 && (
+            <span className="text-fg-dim text-xs">
+              {strings.settings.onlyCovers} {model.languages.join(', ')}
+            </span>
+          )}
+        </div>
+        {model.note && <p className="text-fg-dim mt-0.5 text-xs">{model.note}</p>}
+        {model.error && <p className="text-danger mt-0.5 text-xs">{model.error}</p>}
+      </div>
+      {model.local && (model.state === 'absent' || model.state === 'failed') && (
+        <Button onClick={onDownload}>
+          {strings.settings.download}
+          <span className="ml-1 opacity-70">~{model.size_mb} MB</span>
+        </Button>
+      )}
+    </div>
+  )
+}
+
+/** `faster_whisper:large-v3-turbo` → `faster-whisper · large-v3-turbo`. */
+function label(id: string): string {
+  const [backend, ...rest] = id.split(':')
+  return `${backend!.replace(/_/g, '-')} · ${rest.join(':')}`
+}
+
+const languageNames =
+  typeof Intl !== 'undefined' && 'DisplayNames' in Intl
+    ? new Intl.DisplayNames(['en'], { type: 'language' })
+    : null
+
+function languageName(code: string): string {
+  try {
+    return languageNames?.of(code) ?? code
+  } catch {
+    return code
+  }
 }
 
 function BackendsSection({

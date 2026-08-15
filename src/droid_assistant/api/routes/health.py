@@ -10,6 +10,7 @@ from fastapi import APIRouter, HTTPException, Query
 
 from ... import __version__
 from ...backends import registry
+from ...backends.asr import catalog
 from ...logging import current_levels, set_level
 from ..schemas import ConfigPatchRequest, PresetRequest
 from .deps import ServicesDep
@@ -106,6 +107,15 @@ async def patch_config(body: ConfigPatchRequest, services: Services) -> dict[str
         section("asr")["backend"] = body.asr_backend
     if body.asr_model is not None:
         section("asr")["model"] = body.asr_model
+    if body.asr_by_language is not None:
+        routes = dict(section("asr")["by_language"])
+        for code, model_id in body.asr_by_language.items():
+            if not model_id:
+                routes.pop(code, None)  # "" ⇒ fall back to the default
+                continue
+            backend, model = catalog.parse(model_id, settings.asr.backend)
+            routes[code] = {"backend": backend, "model": model}
+        section("asr")["by_language"] = routes
     if body.translation_backend is not None:
         section("translation")["backend"] = body.translation_backend
     if body.llm_model is not None:

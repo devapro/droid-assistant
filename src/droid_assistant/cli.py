@@ -148,7 +148,10 @@ def _download(url: str, target: Path, label: str) -> bool:
 @models_app.command("download")
 def models_download(
     config: ConfigOption = None,
-    asr: Annotated[str | None, typer.Option(help="ASR model to fetch, e.g. large-v3-turbo")] = None,
+    asr: Annotated[
+        str | None,
+        typer.Option(help="One model to fetch, e.g. gigaam:v3-rnnt. Default: every one in use."),
+    ] = None,
     vad: Annotated[bool, typer.Option(help="Fetch the Silero VAD model.")] = True,
     diarization: Annotated[bool, typer.Option(help="Fetch diarization models.")] = True,
 ) -> None:
@@ -180,19 +183,28 @@ def models_download(
         else:
             console.print("  [green]✓[/green] speaker segmentation (already present)")
 
-    model_name = asr or settings.asr.model
-    if settings.asr.backend == "faster_whisper":
-        console.print(f"  [cyan]↓[/cyan] ASR {model_name} …")
-        try:
-            from faster_whisper import WhisperModel
+    # Every model this configuration can route to, not just the default. A
+    # per-language route (`asr.by_language`) to a model nobody downloaded is a
+    # session that fails at the moment of recording.
+    from .backends.asr import catalog
 
-            WhisperModel(model_name, device="cpu", compute_type="int8", download_root=str(models))
-            console.print(f"  [green]✓[/green] ASR {model_name}")
-        except ImportError:
-            err.print("  [yellow]![/yellow] faster-whisper not installed: uv sync --extra local")
-            ok = False
+    if asr:
+        backend, model = catalog.parse(asr, settings.asr.backend)
+        wanted = [catalog.spec_for(backend, model)]
+    else:
+        wanted = catalog.required(settings)
+
+    for spec in wanted:
+        state, size = catalog.state(spec, settings)
+        if state == "present":
+            console.print(f"  [green]✓[/green] ASR {spec.id} (already present, {size} MB)")
+            continue
+        console.print(f"  [cyan]↓[/cyan] ASR {spec.id} … [dim](~{spec.size_mb} MB)[/dim]")
+        try:
+            catalog.download(spec, models)
+            console.print(f"  [green]✓[/green] ASR {spec.id}")
         except Exception as exc:
-            err.print(f"  [red]✗[/red] ASR {model_name}: {exc}")
+            err.print(f"  [red]✗[/red] ASR {spec.id}: {exc}")
             ok = False
 
     console.print()
@@ -329,9 +341,10 @@ def models_gigaam(
     archive.unlink(missing_ok=True)
 
     console.print(
-        "\n[green]Ready.[/green] Route Russian to it, leaving other languages alone:\n"
-        "\n  [asr.by_language.ru]\n"
-        '  backend = "gigaam"\n'
+        "\n[green]Ready.[/green] Route Russian to it — leaving every other language on the\n"
+        "model you use now — from Settings → Speech models, or in config.toml:\n"
+        "\n\n  " + r"\[asr.by_language.ru]"
+        '\n  backend = "gigaam"\n'
         "\n[dim]Then compare it against what you use now:\n"
         "  droid-assistant eval --language ru --backends "
         "faster_whisper:large-v3-turbo,gigaam[/dim]"
@@ -339,10 +352,65 @@ def models_gigaam(
 
 
 @models_app.command("list")
-def models_list(config: ConfigOption = None) -> None:
-    """Show what is on disk."""
+def models_list(
+    config: ConfigOption = None,
+    files: Annotated[bool, typer.Option(help="Also list every file on disk.")] = False,
+) -> None:
+    """Show which speech models are available and which are in use."""
+    from .backends.asr import catalog
+
     settings = _settings(config)
-    table = Table(title=f"Models in {settings.models_dir}")
+    routing = {
+        code: f"{b}:{m}"
+        for code in settings.capture.languages
+        for b, m in [settings.asr.for_language(code)]
+    }
+    default_id = f"{settings.asr.backend}:{settings.asr.model}"
+
+    catalogue = Table(title="Speech models")
+    catalogue.add_column("Model")
+    catalogue.add_column("State")
+    catalogue.add_column("Size", justify="right")
+    catalogue.add_column("Languages")
+    catalogue.add_column("Used for")
+    for row in catalog.inventory(settings):
+        used = [code for code, mid in routing.items() if mid == row["id"]]
+        if row["id"] == default_id:
+            used.append("default")
+        languages = row["languages"]
+        state = str(row["state"])
+        # Printing all 99 of Whisper's languages makes the table unreadable and
+        # tells nobody anything; the count is the part that carries meaning.
+        if languages is None:
+            coverage = "any"
+        elif len(languages) > 4:  # type: ignore[arg-type]
+            coverage = f"{len(languages)} languages"  # type: ignore[arg-type]
+        else:
+            coverage = ", ".join(languages)  # type: ignore[arg-type]
+        catalogue.add_row(
+            str(row["id"]),
+            {
+                "present": "[green]on disk[/green]",
+                "ready": "[green]cloud[/green]",
+                "absent": "[dim]not downloaded[/dim]",
+                "unavailable": "[yellow]no credential[/yellow]",
+            }.get(state, state),
+            f"{row['size_mb']} MB" if row["size_mb"] else "—",
+            coverage,
+            ", ".join(used),
+        )
+    console.print(catalogue)
+    console.print(
+        "\n[dim]Fetch one:   droid-assistant models download --asr <model>\n"
+        "Route a language to it, from Settings → Speech models or in config.toml:\n"
+        r"  \[asr.by_language.ru]"
+        '\n  backend = "gigaam"[/dim]'
+    )
+
+    if not files:
+        return
+
+    table = Table(title=f"Files in {settings.models_dir}")
     table.add_column("File")
     table.add_column("Size", justify="right")
     if not settings.models_dir.exists():

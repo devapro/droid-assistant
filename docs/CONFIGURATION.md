@@ -114,6 +114,8 @@ conversation and prefer whole sentences.
 | `condition_on_previous_text` | `false` | `true` amplifies hallucination loops. Leave it off |
 | `word_timestamps` | `true` | Needed for click-to-seek (FR-ASR-5) |
 | `serbian_script` | `"latin"` | `latin` \| `cyrillic`. Output is normalised to one script (FR-ASR-10) |
+| `preload` | `[]` | Extra `backend:model` ids to keep on disk so they can be selected from the UI without a wait. See below |
+| `download_missing` | `false` | Fetch anything in the routing set that is missing, on start, in the background |
 
 **Choosing a size for a non-English language.** Whisper's multilingual capacity
 is weighted towards English, so the smaller models degrade far faster away from
@@ -168,7 +170,48 @@ pinned there is nothing to route on, so the default applies — and the model
 detects one language per window anyway (R13).
 
 Backends are loaded once and cached, so switching language between sessions does
-not reload weights.
+not reload weights. Re-routing a language releases the model it used to point
+at, so changing your mind repeatedly does not leave three sets of weights
+resident.
+
+**You do not have to edit this file.** Settings → Speech models does the same
+thing from a browser: a default, one row per language in `capture.languages`,
+and a list of what is on disk. It takes effect on the next session, with no
+restart (FR-CFG-8). The picker only offers models this server actually has —
+routing a language to weights that are not present would fail at the moment of
+recording, which is the worst time to find out.
+
+### Which models get downloaded
+
+The download set is **derived from the routing**, not listed separately:
+`asr.model` plus every model `asr.by_language` points at. A hand-maintained
+list drifts out of step with the routing, and the failure surfaces mid-meeting.
+
+```bash
+droid-assistant models list              # what exists, what is on disk, what uses it
+droid-assistant models download          # everything this configuration routes to
+droid-assistant models download --asr gigaam:v3-rnnt   # just one
+```
+
+`asr.preload` adds to that set without routing anything to it — the models you
+want *available to switch to* from the UI:
+
+```toml
+[asr]
+preload = ["faster_whisper:small", "gigaam:v3-rnnt"]
+```
+
+In `.env`, where a TOML list is not expressible, a comma-separated string works:
+
+```bash
+DROID_ASR__PRELOAD=faster_whisper:small,gigaam:v3-rnnt
+DROID_ASR__DOWNLOAD_MISSING=true    # fetch them on start, in the background
+```
+
+`download_missing` is off by default because on a fresh volume it is a
+multi-gigabyte download, and that should be a decision rather than a surprise.
+The server answers throughout either way — downloading never blocks the socket,
+and `GET /api/models` reports progress.
 
 ### `[asr.gigaam]` — Russian
 
@@ -368,11 +411,22 @@ DROID_MODELS_DIR=/srv/shared-models         # weights are regenerable and large
 
 ## Changing configuration without a restart
 
-`PATCH /api/config`, or Settings → Backends, can change the ASR, translation,
-and LLM backends, the target language, the default mode, local-only, and the
-cost ceiling. These take effect **on the next session**; a running session keeps
+`PATCH /api/config`, or Settings → Speech models and Settings → Backends, can
+change the ASR model — overall and per language — the translation and LLM
+backends, the target language, the default mode, local-only, and the cost
+ceiling. These take effect **on the next session**; a running session keeps
 the backend it started with, because swapping a model out from under a live
 pipeline is exactly the surprise this feature exists to avoid (FR-CFG-8).
 
 Log levels apply immediately. Everything else needs a restart, and the API says
 which is which.
+
+Per-language routing merges rather than replacing, so a client editing one row
+does not have to send back the others; `""` removes an entry:
+
+```bash
+curl -X PATCH localhost:8000/api/config -H 'content-type: application/json' \
+     -d '{"asr_by_language": {"ru": "gigaam:v3-rnnt"}}'
+curl -X PATCH localhost:8000/api/config -H 'content-type: application/json' \
+     -d '{"asr_by_language": {"ru": ""}}'      # back to the default
+```

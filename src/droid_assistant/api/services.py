@@ -22,7 +22,9 @@ from pathlib import Path
 from typing import Any
 
 from ..backends import registry
+from ..backends.asr import catalog
 from ..backends.asr.base import ASRBackend
+from ..backends.asr.catalog import ModelSpec
 from ..backends.diarization.base import DiarizationBackend
 from ..backends.llm.base import LLMClient
 from ..backends.translation.base import TranslationBackend
@@ -476,6 +478,11 @@ class Services:
     model_state: str = "loading"
     model_error: str | None = None
     _load_task: asyncio.Task[None] | None = None
+    #: Model downloads this server started, by `backend:model`. Held in memory
+    #: on purpose: a download that did not survive a restart did not finish, and
+    #: the on-disk check is the authority on everything that did.
+    _downloads: dict[str, asyncio.Task[None]] = field(default_factory=dict)
+    _download_errors: dict[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.sessions = SessionManager(self)
@@ -591,6 +598,22 @@ class Services:
         if self.model_state == "ready":
             return
         self._load_task = asyncio.create_task(self._load_models(), name="load-models")
+        if self.settings.asr.download_missing:
+            self._prefetch()
+
+    def _prefetch(self) -> None:
+        """Fetch models this configuration routes to but does not have.
+
+        The default model downloads itself on first load; this covers the rest —
+        a per-language route, or anything in `asr.preload` that the operator
+        wants available to switch to. In the background, because the whole point
+        of the loading rework was that the server keeps answering while weights
+        arrive.
+        """
+        for spec in catalog.required(self.settings):
+            if catalog.state(spec, self.settings)[0] == "absent":
+                log.info("prefetching missing model", extra={"model": spec.id})
+                self.start_model_download(spec)
 
     async def wait_for_models(self, timeout: float) -> bool:
         """Wait up to `timeout` for background loading to settle. True if ready."""
@@ -618,7 +641,42 @@ class Services:
             }.get(self.model_state, ""),
         }
 
+    # --- model downloads ----------------------------------------------------
+
+    def start_model_download(self, spec: ModelSpec) -> None:
+        """Fetch weights in the background, at most one task per model."""
+        existing = self._downloads.get(spec.id)
+        if existing is not None and not existing.done():
+            return
+        self._download_errors.pop(spec.id, None)
+
+        async def run() -> None:
+            try:
+                await asyncio.to_thread(catalog.download, spec, self.settings.models_dir)
+                log.info("model downloaded", extra={"model": spec.id})
+            except Exception as exc:
+                self._download_errors[spec.id] = str(exc)
+                log.error("model download failed: %s", exc, extra={"model": spec.id})
+
+        self._downloads[spec.id] = asyncio.create_task(run(), name=f"download:{spec.id}")
+
+    def download_state(self, model_id: str) -> str | None:
+        """`downloading` | `failed`, or None to defer to what is on disk."""
+        task = self._downloads.get(model_id)
+        if task is not None and not task.done():
+            return "downloading"
+        return "failed" if model_id in self._download_errors else None
+
+    def download_error(self, model_id: str) -> str | None:
+        return self._download_errors.get(model_id)
+
+    def tracked_downloads(self) -> list[str]:
+        """Every model this server has tried to fetch since it started."""
+        return sorted(set(self._downloads) | set(self._download_errors))
+
     async def shutdown(self) -> None:
+        for task in self._downloads.values():
+            task.cancel()
         if self._load_task is not None:
             self._load_task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
@@ -658,6 +716,26 @@ class Services:
                 self._asr_by_language[key] = cached
             return cached
 
+    async def _evict_unreachable_asr(self) -> None:
+        """Drop per-language backends the new routing can no longer reach.
+
+        Each cached entry is a loaded model holding hundreds of megabytes. Left
+        alone, re-routing Russian from GigaAM to Whisper three times over an
+        afternoon leaves three models resident and nothing using two of them.
+
+        Running sessions hold their own reference, so a backend dropped here
+        stays alive for as long as someone is mid-recording on it.
+        """
+        reachable = {
+            self.settings.asr.for_language(code) for code in self.settings.capture.languages
+        }
+        reachable.add((self.settings.asr.backend, self.settings.asr.model))
+        for key in [k for k in self._asr_by_language if k not in reachable]:
+            backend = self._asr_by_language.pop(key)
+            log.info("releasing ASR backend", extra={"backend": key[0], "model": key[1]})
+            with contextlib.suppress(Exception):
+                await backend.close()
+
     async def reconfigure(self, settings: Settings) -> None:
         """Swap backends for the next session without a restart (FR-CFG-8).
 
@@ -694,6 +772,7 @@ class Services:
         self.asr = new_asr
         self.diarization = new_diarization
         self.translation_fallback = registry.build_translation_fallback(settings)
+        await self._evict_unreachable_asr()
 
         report = registry.validate(settings, new_asr)
         self.validation = report

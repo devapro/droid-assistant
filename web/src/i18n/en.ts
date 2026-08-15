@@ -179,6 +179,25 @@ export const en = {
     modelsLoadingRemedy:
       'On a first run this downloads several gigabytes. Recording is unavailable until it finishes — progress is in the server log.',
     modelsFailed: 'The speech model could not be loaded.',
+    models: 'Speech models',
+    defaultModel: 'Default model',
+    defaultModelHelp:
+      'Used for every recording that is not pinned to a single language. A change applies to the next session; a recording in progress keeps the model it started with.',
+    perLanguage: 'Per language',
+    perLanguageHelp:
+      'No model is best at every language. A recording pinned to exactly one language uses the model chosen here; one that offers several uses the default, because recognition detects a single language per window and there is nothing to route on.',
+    useDefault: 'Use default',
+    onlyCovers: 'only recognises',
+    availableModels: 'Available models',
+    availableModelsHelp:
+      'Only models already on this server can be selected. Downloading one takes minutes and happens in the background — you can leave this page.',
+    download: 'Download',
+    downloading: 'Downloading…',
+    onDisk: 'on disk',
+    notDownloaded: 'not downloaded',
+    noCredential: 'no credential',
+    cloudReady: 'cloud',
+    modelsDir: 'Models directory',
     theme: 'Theme',
     themeSystem: 'Match device',
     themeLight: 'Light',
