@@ -702,3 +702,108 @@ class TestCostTracking:
         assert client.available is False
         with pytest.raises(BudgetExceeded):
             await client.complete("anything")
+
+
+class TestModelLoading:
+    """A first run downloads gigabytes. The server must stay answerable while
+    it happens, and say what it is doing (SRS §8.5)."""
+
+    def test_health_answers_and_reports_the_model(self, client) -> None:
+        health = client.get("/api/health").json()
+        assert "models" in health
+        assert health["models"]["state"] in {"loading", "ready", "failed"}
+        assert health["models"]["backend"]
+
+    async def test_health_answers_while_a_model_is_still_loading(
+        self, services: Services, client
+    ) -> None:
+        """The defect this exists for: loading blocked startup, so the server
+        answered nothing at all — not even the endpoint whose job is to report
+        that models are loading."""
+        services.model_state = "loading"
+
+        response = client.get("/api/health")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["status"] == "starting"
+        assert body["models"]["state"] == "loading"
+        # And it explains itself rather than just naming a state.
+        assert "downloads" in body["models"]["detail"]
+
+    async def test_a_brief_load_is_waited_for_rather_than_refused(
+        self, services: Services, client
+    ) -> None:
+        """A model already on disk loads in a second or two. Refusing a
+        recording over that would be worse than waiting for it."""
+        services.model_state = "loading"
+        response = client.post("/api/sessions", json={"languages": ["en"]})
+        assert response.status_code == 201
+        client.post(f"/api/sessions/{response.json()['session_id']}/stop")
+
+    async def test_a_genuine_download_is_refused_with_the_reason(
+        self, services: Services, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Minutes, not seconds: starting a session would leave the user
+        recording into nothing.
+
+        Driven through `SessionManager` rather than the HTTP client, because
+        `TestClient` runs the app in its own event loop and the load task must
+        live in the same one it is awaited from.
+        """
+        import asyncio
+
+        from droid_assistant.api import services as services_module
+        from droid_assistant.api.services import SessionError, SessionSpec
+        from droid_assistant.backends.asr.mock import MockASRBackend
+
+        monkeypatch.setattr(services_module, "MODEL_WAIT_S", 0.05)
+
+        class SlowToLoad(MockASRBackend):
+            async def load(self) -> None:
+                await asyncio.sleep(60)
+
+        services.asr = SlowToLoad()  # type: ignore[assignment]
+        services.model_state = "loading"
+        services._load_task = None
+
+        with pytest.raises(SessionError, match="still loading"):
+            await services.sessions.create(SessionSpec(languages=["en"]))
+
+        assert services.model_status()["state"] == "loading"
+        if services._load_task:
+            services._load_task.cancel()
+
+    async def test_a_failed_load_is_reported_rather_than_hidden(
+        self, services: Services, client
+    ) -> None:
+        services.model_state = "failed"
+        services.model_error = "could not download model 'large-v3-turbo'"
+
+        health = client.get("/api/health").json()
+        assert health["models"]["state"] == "failed"
+        assert "large-v3-turbo" in health["models"]["detail"]
+
+        response = client.post("/api/sessions", json={"languages": ["en"]})
+        assert response.status_code == 409
+        assert "large-v3-turbo" in response.json()["error"]
+
+    async def test_recording_works_once_ready(self, services: Services, client) -> None:
+        services.model_state = "ready"
+        response = client.post("/api/sessions", json={"languages": ["en"]})
+        assert response.status_code == 201
+        client.post(f"/api/sessions/{response.json()['session_id']}/stop")
+
+    async def test_switching_model_clears_a_stale_loading_state(self, services: Services) -> None:
+        """Switching to a model already on disk must make recording available
+        immediately, not wait out the original download."""
+        from droid_assistant.config import Settings
+
+        services.model_state = "loading"
+        settings = Settings(
+            **{
+                **services.settings.model_dump(),
+                "asr": {**services.settings.model_dump()["asr"], "model": "another-mock"},
+            }
+        )
+        await services.reconfigure(settings)
+        assert services.model_state == "ready"

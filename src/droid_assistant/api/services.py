@@ -47,6 +47,11 @@ from ..store.repository import SessionRecord
 
 log = logging.getLogger(__name__)
 
+#: How long session creation waits for a model that is still loading. Long
+#: enough for a local model already on disk, short enough that a first-run
+#: download is reported rather than silently hung on.
+MODEL_WAIT_S = 8.0
+
 #: An ingest token outlives any plausible session, so a reconnect after a long
 #: outage still authenticates (FR-CAP-6). It is revoked on stop regardless.
 TOKEN_TTL_MS = 12 * 60 * 60 * 1000
@@ -152,6 +157,19 @@ class SessionManager:
         settings = services.settings
 
         self._check_disk()
+        # An already-downloaded model loads in a second or two, so wait briefly
+        # rather than refusing a recording that would have been fine. Only a
+        # genuine download — minutes, not seconds — gets turned away.
+        if services.model_state == "loading":
+            await services.wait_for_models(timeout=MODEL_WAIT_S)
+        if services.model_state == "loading":
+            raise SessionError(
+                "The speech model is still loading. On a first run this downloads several "
+                "gigabytes; the recording would have nothing to transcribe with. Try again "
+                "in a few minutes — progress is in the server log."
+            )
+        if services.model_state == "failed":
+            raise SessionError(f"The speech model could not be loaded: {services.model_error}")
 
         mode = spec.mode or settings.capture.default_mode
         # A session pinned to one language may route to a different engine
@@ -453,6 +471,11 @@ class Services:
     #: Extra backends built for `asr.by_language`, keyed by (backend, model).
     _asr_by_language: dict[tuple[str, str], ASRBackend] = field(default_factory=dict)
     _asr_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+    #: loading | ready | failed. Models load in the background so the server can
+    #: report on them while it happens.
+    model_state: str = "loading"
+    model_error: str | None = None
+    _load_task: asyncio.Task[None] | None = None
 
     def __post_init__(self) -> None:
         self.sessions = SessionManager(self)
@@ -513,19 +536,13 @@ class Services:
         return services
 
     async def start(self) -> None:
+        """Everything that must finish before the server accepts a request.
+
+        Loading models is *not* on this path — see `begin_loading`. On a first
+        run that is a multi-gigabyte download, and doing it here meant the
+        server bound no socket at all until it finished.
+        """
         await self.plugins.start()
-        try:
-            await self.asr.load()
-        except Exception as exc:
-            self.validation.errors.append(str(exc))
-            log.error("ASR backend failed to load: %s", exc)
-        if self.diarization is not None:
-            try:
-                await self.diarization.load()
-            except Exception as exc:
-                self.validation.warnings.append(f"diarization unavailable: {exc}")
-                log.warning("diarization backend failed to load: %s", exc)
-                self.diarization = None
 
         report = registry.validate(self.settings, self.asr)
         self.validation.errors.extend(report.errors)
@@ -537,7 +554,75 @@ class Services:
         if recovered:
             log.info("recovered interrupted sessions", extra={"count": len(recovered)})
 
+    async def _load_models(self) -> None:
+        self.model_state = "loading"
+        try:
+            await self.asr.load()
+            self.model_state = "ready"
+        except Exception as exc:
+            self.model_state = "failed"
+            self.model_error = str(exc)
+            self.validation.errors.append(str(exc))
+            log.error("ASR backend failed to load: %s", exc)
+
+        if self.diarization is not None:
+            try:
+                await self.diarization.load()
+            except Exception as exc:
+                self.validation.warnings.append(f"diarization unavailable: {exc}")
+                log.warning("diarization backend failed to load: %s", exc)
+                self.diarization = None
+
+    def begin_loading(self) -> None:
+        """Start loading models in the background.
+
+        Called from the request-serving loop rather than from `start()`, because
+        the task belongs to whichever loop will later await it — and in tests
+        those are not the same loop.
+
+        Loading happens in the background at all because a first run downloads
+        several gigabytes, and blocking startup on it meant the server answered
+        nothing — not even `/api/health`, whose job is to report model status
+        (SRS §8.5). A server that cannot say "still downloading" is
+        indistinguishable from a broken one.
+        """
+        if self._load_task is not None and not self._load_task.done():
+            return
+        if self.model_state == "ready":
+            return
+        self._load_task = asyncio.create_task(self._load_models(), name="load-models")
+
+    async def wait_for_models(self, timeout: float) -> bool:
+        """Wait up to `timeout` for background loading to settle. True if ready."""
+        self.begin_loading()
+        if self._load_task is None or self._load_task.done():
+            return self.model_state == "ready"
+        with contextlib.suppress(TimeoutError, asyncio.CancelledError):
+            await asyncio.wait_for(asyncio.shield(self._load_task), timeout=timeout)
+        return self.model_state == "ready"
+
+    def model_status(self) -> dict[str, Any]:
+        """What the models are doing, for `/api/health` and the pre-flight check."""
+        return {
+            "state": self.model_state,
+            "backend": self.asr.capabilities.name,
+            "error": self.model_error,
+            "detail": {
+                "loading": (
+                    "On a first run this downloads several gigabytes and can take many "
+                    "minutes. Recording is unavailable until it finishes; progress is in "
+                    "the server log."
+                ),
+                "failed": self.model_error or "",
+                "ready": "",
+            }.get(self.model_state, ""),
+        }
+
     async def shutdown(self) -> None:
+        if self._load_task is not None:
+            self._load_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._load_task
         await self.sessions.stop_all()
         await self.plugins.stop()
         for backend in self._asr_by_language.values():
@@ -597,6 +682,11 @@ class Services:
         )
         if asr_changed:
             await new_asr.load()
+            # The new backend is loaded, so the session guard must stop citing
+            # the old one's progress — otherwise switching to a model already on
+            # disk still refuses recordings until the original download finishes.
+            self.model_state = "ready"
+            self.model_error = None
         if diarization_changed and new_diarization is not None:
             await new_diarization.load()
 

@@ -117,7 +117,8 @@ export interface JsonSchemaProperty {
 }
 
 export interface Health {
-  status: 'ok' | 'degraded'
+  status: 'ok' | 'degraded' | 'starting'
+  models: { state: 'loading' | 'ready' | 'failed'; backend: string; error: string | null; detail: string }
   version: string
   uptime_s: number
   backends: {

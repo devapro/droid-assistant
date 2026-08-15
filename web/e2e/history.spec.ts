@@ -93,7 +93,10 @@ test.describe('History actions', () => {
     // recoverable afterwards (FR-SES-12).
     await makeSession(page)
     const before = await titleOf(page)
-    const rowsBefore = await rowCount(page)
+    // Track the specific session rather than the row count: the list is capped
+    // at 100, so past that a deletion simply reveals the next one.
+    const id = await firstRow(page).getAttribute('data-session-id')
+    const row = page.locator(`[data-session-id="${id}"]`)
 
     await firstRow(page).getByRole('button', { name: /^Delete / }).click()
     const dialog = page.getByRole('alertdialog')
@@ -104,17 +107,18 @@ test.describe('History actions', () => {
     // Cancelling leaves everything alone.
     await dialog.getByRole('button', { name: 'Cancel' }).click()
     await expect(dialog).toBeHidden()
-    expect(await rowCount(page)).toBe(rowsBefore)
+    await expect(row).toBeVisible()
 
     // Confirming removes it from the list and from the server.
     await firstRow(page).getByRole('button', { name: /^Delete / }).click()
     await page.getByRole('alertdialog').getByRole('button', { name: 'Delete' }).click()
     await expect(page.getByRole('alertdialog')).toBeHidden()
-    await expect.poll(() => rowCount(page)).toBe(rowsBefore - 1)
+    await expect(row).toHaveCount(0)
 
     await page.reload()
     await page.getByRole('button', { name: 'History' }).click()
-    await expect.poll(() => rowCount(page)).toBe(rowsBefore - 1)
+    await expect(page.locator('[data-session-id]').first()).toBeVisible()
+    await expect(row).toHaveCount(0)
   })
 
   test('Escape closes the confirmation without deleting', async ({ page }) => {

@@ -159,6 +159,12 @@ VAD model and a muted microphone, and both are reported there.
 
 ## Troubleshooting
 
+**The first start takes ages and Settings says the model is loading.** That is
+a first run downloading the speech model — `large-v3-turbo` is about 1.5 GB. The
+server answers throughout and reports progress in `GET /api/health`; recording
+is refused until it finishes, with that reason. Set `HF_TOKEN` in `.env` to lift
+Hugging Face's anonymous rate limit, which is usually what makes it slow.
+
 **"Record" does nothing, or there is no permission prompt.** The page is not on
 a secure origin. Check for `https://` in the address bar. See step 3.
 

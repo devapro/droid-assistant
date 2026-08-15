@@ -37,8 +37,16 @@ async def health(services: Services) -> dict[str, Any]:
         registry.build_translation(settings, llm),
         llm,
     )
+    models = services.model_status()
     return {
-        "status": "degraded" if services.validation.errors else "ok",
+        "status": (
+            "starting"
+            if models["state"] == "loading"
+            else "degraded"
+            if services.validation.errors
+            else "ok"
+        ),
+        "models": models,
         "version": __version__,
         "uptime_s": round(time.time() - services.started_at, 1),
         "backends": backends,

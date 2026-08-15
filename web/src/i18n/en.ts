@@ -47,6 +47,9 @@ export const en = {
     micSilent: 'The microphone is not picking anything up.',
     micSilentRemedy: 'Check that it is not muted and that the right device is selected.',
     micFail: 'No microphone access.',
+    modelsLoading: 'The speech model is still loading — recording is unavailable.',
+    modelsLoadingRemedy:
+      'A first run downloads several gigabytes. Try again in a few minutes.',
     sourceOk: 'Capturing this machine’s audio',
     sourceSilent: 'This machine is not playing any sound.',
     sourceSilentRemedy: 'Start the video or call you want to record, then try again.',
@@ -169,6 +172,13 @@ export const en = {
       'Plugins run in-process with full server privileges. Installing one is equivalent to running arbitrary code on the server.',
     noPlugins: 'No plugins are installed.',
     noPluginsAction: 'Drop a .py file into the plugins directory and restart the server.',
+    unreachable: 'Cannot reach the server.',
+    unreachableRemedy:
+      'Check that it is running and that this device can reach it. This page keeps working; it just has nothing to show.',
+    modelsLoading: 'The speech model is still loading.',
+    modelsLoadingRemedy:
+      'On a first run this downloads several gigabytes. Recording is unavailable until it finishes — progress is in the server log.',
+    modelsFailed: 'The speech model could not be loaded.',
     theme: 'Theme',
     themeSystem: 'Match device',
     themeLight: 'Light',

@@ -28,13 +28,19 @@ export function Settings() {
   const [trustNotice, setTrustNotice] = useState('')
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [saving, setSaving] = useState(false)
+  const [unreachable, setUnreachable] = useState(false)
 
   const refresh = async () => {
-    const [healthResult, pluginResult] = await Promise.all([
-      api.health().catch(() => null),
-      api.plugins().catch(() => null),
-    ])
-    if (healthResult) setHealth(healthResult)
+    // A failed health call used to leave every panel showing "Loading…"
+    // indefinitely, which reads as a hang rather than as the server being
+    // down. FR-UI-9: name the component and say what to do.
+    try {
+      setHealth(await api.health())
+      setUnreachable(false)
+    } catch {
+      setUnreachable(true)
+    }
+    const pluginResult = await api.plugins().catch(() => null)
     if (pluginResult) {
       setPlugins(pluginResult.plugins)
       setTrustNotice(pluginResult.trust_notice)
@@ -76,9 +82,17 @@ export function Settings() {
       </nav>
 
       <div className="flex-1 overflow-y-auto px-4 py-4">
+        {unreachable && <ServerProblem onRetry={refresh} />}
+        {health?.models?.state === 'loading' && <ModelsLoading detail={health.models.detail} />}
         {section === 'capture' && <CaptureSection devices={devices} />}
         {section === 'backends' && (
-          <BackendsSection health={health} saving={saving} setSaving={setSaving} onSaved={refresh} />
+          <BackendsSection
+            health={health}
+            unreachable={unreachable}
+            saving={saving}
+            setSaving={setSaving}
+            onSaved={refresh}
+          />
         )}
         {section === 'plugins' && (
           <PluginsSection plugins={plugins} trustNotice={trustNotice} onChanged={refresh} />
@@ -170,13 +184,42 @@ function CaptureSection({ devices }: { devices: DeviceInfo[] }) {
   )
 }
 
+function ServerProblem({ onRetry }: { onRetry: () => Promise<void> }) {
+  const strings = t()
+  return (
+    <div role="alert" className="bg-danger/15 text-danger mb-4 rounded-xl p-3 text-sm">
+      <p className="font-medium">{strings.settings.unreachable}</p>
+      <p className="mt-0.5 text-xs opacity-90">{strings.settings.unreachableRemedy}</p>
+      <button
+        type="button"
+        onClick={() => void onRetry()}
+        className="border-danger/40 mt-2 rounded-lg border px-3 py-1.5 text-xs"
+      >
+        {strings.common.retry}
+      </button>
+    </div>
+  )
+}
+
+function ModelsLoading({ detail }: { detail: string }) {
+  const strings = t()
+  return (
+    <div role="status" className="bg-warn/15 text-warn mb-4 rounded-xl p-3 text-sm">
+      <p className="font-medium">{strings.settings.modelsLoading}</p>
+      <p className="mt-0.5 text-xs opacity-90">{detail || strings.settings.modelsLoadingRemedy}</p>
+    </div>
+  )
+}
+
 function BackendsSection({
   health,
+  unreachable,
   saving,
   setSaving,
   onSaved,
 }: {
   health: Health | null
+  unreachable: boolean
   saving: boolean
   setSaving: (value: boolean) => void
   onSaved: () => Promise<void>
@@ -188,7 +231,12 @@ function BackendsSection({
 
   useEffect(() => setLocalOnly(health?.local_only ?? false), [health?.local_only])
 
-  if (!health) return <p className="text-fg-dim text-sm">{strings.common.loading}</p>
+  // The unreachable banner is rendered once, above every section — repeating
+  // it here said the same thing twice. With nothing to show, this section says
+  // nothing rather than spinning forever.
+  if (!health) {
+    return unreachable ? null : <p className="text-fg-dim text-sm">{strings.common.loading}</p>
+  }
 
   const save = async (body: Record<string, unknown>) => {
     setSaving(true)
@@ -472,12 +520,25 @@ function SchemaField({
 
 function ServerSection({ health }: { health: Health | null }) {
   const strings = t()
+  // The unreachable banner is rendered above this, so a bare loading line here
+  // only ever means a request genuinely in flight.
   if (!health) return <p className="text-fg-dim text-sm">{strings.common.loading}</p>
   const disk = health.disk
   return (
     <div className="flex flex-col gap-4 text-sm">
       <Row label="Version" value={health.version} />
       <Row label="Status" value={health.status} tone={health.status === 'ok' ? 'good' : 'warn'} />
+      <Row
+        label="Speech model"
+        value={`${health.models.backend} · ${health.models.state}`}
+        tone={
+          health.models.state === 'ready'
+            ? 'good'
+            : health.models.state === 'failed'
+              ? 'bad'
+              : 'warn'
+        }
+      />
       <Row label="Uptime" value={`${Math.round(health.uptime_s / 60)} min`} />
       <Row label="GPU" value={health.gpu.present ? `${health.gpu.cuda_devices} CUDA device(s)` : 'none (CPU)'} />
       {disk.available && (

@@ -57,6 +57,9 @@ def create_app(settings: Settings | None = None, *, services: Services | None = 
         app.state.services = container
         if owns_services:
             await container.start()
+        # Always started here, injected services included: the task must belong
+        # to the loop that serves requests.
+        container.begin_loading()
         try:
             yield
         finally:
