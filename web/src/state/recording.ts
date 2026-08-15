@@ -9,7 +9,7 @@
  */
 
 import { create } from 'zustand'
-import { api, type ModeInfo, type Speaker, type Utterance } from '../api/client'
+import { ApiError, api, type ModeInfo, type Speaker, type Utterance } from '../api/client'
 import { ChunkBuffer, clearSession, recordPendingSession } from '../capture/buffer'
 import { Recorder, type AudioProcessingOptions } from '../capture/recorder'
 import type { CaptureSource } from '../capture/sources'
@@ -313,10 +313,26 @@ export const useRecording = create<RecordingState>((set, get) => ({
   },
 
   async setMode(mode) {
-    get().updateSettings({ mode })
-    const { sessionId, state } = get()
-    if (sessionId && state === 'recording') {
+    const { sessionId, state, settings } = get()
+    if (!sessionId || state !== 'recording') {
+      get().updateSettings({ mode })
+      return
+    }
+    // Applied only once the server has taken it. Setting it locally first left
+    // the selector showing a mode the session was not in whenever the switch
+    // was refused — Live against a batch-only recogniser, say — and the refusal
+    // itself went nowhere, because nothing awaited this.
+    try {
       await api.setMode(sessionId, mode)
+      get().updateSettings({ mode })
+    } catch (thrown) {
+      get().updateSettings({ mode: settings.mode })
+      get().notify({
+        severity: 'warning',
+        component: 'sessions',
+        message: thrown instanceof Error ? thrown.message : 'The mode could not be changed.',
+        remedy: thrown instanceof ApiError ? thrown.remedy : undefined,
+      })
     }
   },
 

@@ -180,6 +180,7 @@ export const en = {
     languages: 'Languages',
     targetLanguage: 'Translate into',
     mode: 'Latency mode',
+    needsStreamingBackend: 'needs a streaming recogniser',
     audioProcessing: 'Browser audio processing',
     echoCancellation: 'Echo cancellation',
     noiseSuppression: 'Noise suppression',

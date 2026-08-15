@@ -120,7 +120,7 @@ test.describe('History and session detail', () => {
     // FR-SES-8: editing marks the line as edited and keeps the original.
     const line = page.locator('article[data-utt]').first()
     await line.hover()
-    await line.getByRole('button', { name: 'Edit this line' }).click()
+    await line.getByRole('button', { name: 'Correct this line' }).click()
     await page.locator('textarea').fill('corrected by the browser test')
     await page.getByRole('button', { name: 'Save' }).click()
     await expect(page.getByText('edited')).toBeVisible()
