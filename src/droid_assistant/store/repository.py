@@ -222,17 +222,21 @@ class Repository:
         row = await self.db.fetch_one("SELECT * FROM sessions WHERE id = ?", (session_id,))
         return _session_from_row(row) if row else None
 
-    async def list_sessions(
-        self,
+    @staticmethod
+    def _session_filters(
         *,
-        limit: int = 50,
-        offset: int = 0,
         language: str | None = None,
         tag: str | None = None,
         since_ms: int | None = None,
         until_ms: int | None = None,
         query: str | None = None,
-    ) -> list[SessionRecord]:
+    ) -> tuple[str, list[Any]]:
+        """The WHERE clause shared by listing and counting.
+
+        Shared rather than duplicated because the count is what the client
+        paginates against: a total computed over different rows than the page
+        means "Load more" either stops early or never stops.
+        """
         where: list[str] = []
         params: list[Any] = []
         if language:
@@ -256,15 +260,71 @@ class Repository:
         if query:
             where.append("title LIKE ?")
             params.append(f"%{query}%")
-        clause = f"WHERE {' AND '.join(where)}" if where else ""
+        return (f"WHERE {' AND '.join(where)}" if where else ""), params
+
+    async def list_sessions(
+        self,
+        *,
+        limit: int = 50,
+        offset: int = 0,
+        language: str | None = None,
+        tag: str | None = None,
+        since_ms: int | None = None,
+        until_ms: int | None = None,
+        query: str | None = None,
+    ) -> list[SessionRecord]:
+        clause, params = self._session_filters(
+            language=language, tag=tag, since_ms=since_ms, until_ms=until_ms, query=query
+        )
         rows = await self.db.fetch_all(
-            f"SELECT * FROM sessions {clause} ORDER BY started_at DESC LIMIT ? OFFSET ?",
+            # `started_at DESC, id DESC` — a stable order. Two sessions can share
+            # a millisecond, and with only `started_at` SQLite is free to order
+            # them differently between two queries, which across a page boundary
+            # shows one row twice and hides another entirely.
+            f"SELECT * FROM sessions {clause} ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?",
             [*params, limit, offset],
         )
         return [_session_from_row(r) for r in rows]
 
-    async def count_sessions(self) -> int:
-        return int(await self.db.fetch_value("SELECT count(*) FROM sessions", default=0))
+    async def count_sessions(
+        self,
+        *,
+        language: str | None = None,
+        tag: str | None = None,
+        since_ms: int | None = None,
+        until_ms: int | None = None,
+        query: str | None = None,
+    ) -> int:
+        """How many sessions match — the same filters the listing applies."""
+        clause, params = self._session_filters(
+            language=language, tag=tag, since_ms=since_ms, until_ms=until_ms, query=query
+        )
+        return int(
+            await self.db.fetch_value(f"SELECT count(*) FROM sessions {clause}", params, default=0)
+        )
+
+    async def session_facets(self) -> dict[str, list[str]]:
+        """Every language and tag in use, across all sessions.
+
+        Deliberately unfiltered and independent of the current page. The client
+        used to build these lists from whatever rows it happened to have loaded,
+        which meant a tag only used on an old session was not offered until you
+        had scrolled far enough to load it — the filter could not reach the
+        thing it existed to find.
+        """
+        languages = await self.db.fetch_all(
+            "SELECT DISTINCT value AS code FROM sessions, json_each(sessions.source_languages)"
+            " WHERE value <> ''"
+            " UNION SELECT DISTINCT target_language FROM sessions WHERE target_language <> ''"
+        )
+        tags = await self.db.fetch_all(
+            "SELECT DISTINCT value AS name FROM sessions, json_each(sessions.tags)"
+            " WHERE value <> ''"
+        )
+        return {
+            "languages": sorted(str(r[0]) for r in languages),
+            "tags": sorted(str(r[0]) for r in tags),
+        }
 
     async def update_session(self, session_id: str, **fields: Any) -> None:
         if not fields:

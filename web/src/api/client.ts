@@ -142,6 +142,17 @@ export interface Health {
   warnings: string[]
 }
 
+/** One page of `GET /api/sessions`. `total` counts what matches the filters. */
+export interface SessionPage {
+  sessions: Session[]
+  total: number
+  limit: number
+  offset: number
+  has_more: boolean
+  /** Filter options across every session, not just this page. */
+  facets: { languages: string[]; tags: string[] }
+}
+
 /** One entry from `GET /api/models` (FR-ASR-1, FR-ASR-7). */
 export interface ModelInfo {
   id: string
@@ -251,7 +262,7 @@ export const api = {
     for (const [key, value] of Object.entries(params)) {
       if (value !== undefined && value !== '') query.set(key, String(value))
     }
-    return request<{ sessions: Session[]; total: number }>(`/api/sessions?${query}`)
+    return request<SessionPage>(`/api/sessions?${query}`)
   },
 
   getSession: (id: string) => request<Session>(`/api/sessions/${id}`),

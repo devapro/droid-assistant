@@ -96,6 +96,10 @@ export const en = {
       'This session is still recording. Deleting it stops the recording and discards everything captured so far. This cannot be undone.',
     deleteConfirm: 'Delete',
     untitled: 'Untitled session',
+    showing: (shown: number, total: number) =>
+      shown >= total ? `${total}` : `${shown} of ${total}`,
+    loadMore: (remaining: number) =>
+      `Load ${remaining} more recording${remaining === 1 ? '' : 's'}`,
   },
 
   session: {

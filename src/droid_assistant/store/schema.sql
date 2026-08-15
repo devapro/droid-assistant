@@ -41,8 +41,19 @@ CREATE TABLE IF NOT EXISTS sessions (
     created_at          INTEGER NOT NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions (started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_sessions_state   ON sessions (state);
+-- Matches the history listing's ORDER BY exactly, including the `id` tiebreak
+-- that keeps paging stable when two sessions share a millisecond. Ordering on
+-- `started_at` alone left SQLite building a temp B-tree for the second term on
+-- every page of the list.
+--
+-- A new *name* rather than a redefinition: `CREATE INDEX IF NOT EXISTS` sees
+-- the old single-column index already there and does nothing, so an existing
+-- database would have kept paying for that sort forever. The old one is
+-- redundant once this exists — a `(started_at DESC)` lookup is served by this
+-- index's prefix — so it is dropped.
+DROP INDEX IF EXISTS idx_sessions_started;
+CREATE INDEX IF NOT EXISTS idx_sessions_started_id ON sessions (started_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_sessions_state      ON sessions (state);
 
 CREATE TABLE IF NOT EXISTS speakers (
     id                  TEXT PRIMARY KEY,

@@ -11,11 +11,18 @@
  * the top.
  */
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ApiError, api, type SearchHit, type Session } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { EmptyState, Pill, duration, relativeDate } from '../components/primitives'
 import { t } from '../i18n'
+
+/**
+ * How many sessions a page holds. Large enough that most people never reach the
+ * end of the first one, small enough that the request stays quick — each row
+ * costs three extra queries on the server for speaker and artifact counts.
+ */
+const PAGE_SIZE = 50
 
 export function History({ onOpen }: { onOpen: (sessionId: string, utteranceId?: string) => void }) {
   const strings = t()
@@ -26,6 +33,14 @@ export function History({ onOpen }: { onOpen: (sessionId: string, utteranceId?: 
   const [tag, setTag] = useState('')
   const [range, setRange] = useState('')
   const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [total, setTotal] = useState(0)
+  const [hasMore, setHasMore] = useState(false)
+  const [facets, setFacets] = useState<{ languages: string[]; tags: string[] }>({
+    languages: [],
+    tags: [],
+  })
+  const sentinel = useRef<HTMLButtonElement | null>(null)
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<Session | null>(null)
   const [busy, setBusy] = useState(false)
@@ -68,6 +83,8 @@ export function History({ onOpen }: { onOpen: (sessionId: string, utteranceId?: 
       setError(null)
       await api.deleteSession(session.id)
       setSessions((current) => current.filter((s) => s.id !== session.id))
+      // Keep the count honest — it is what "Load more" counts down from.
+      setTotal((current) => Math.max(0, current - 1))
       setPendingDelete(null)
       // A deleted session may still be in the current search results.
       setHits((current) => current?.filter((h) => h.session_id !== session.id) ?? null)
@@ -93,22 +110,81 @@ export function History({ onOpen }: { onOpen: (sessionId: string, utteranceId?: 
     }
   }, [range])
 
+  // The list used to fetch a flat 100 and stop, with nothing saying so — past
+  // that, older conversations simply did not exist as far as the UI was
+  // concerned. Now it pages, and the header says how many there are.
+  const filters = useMemo(
+    () => ({ language: language || undefined, tag: tag || undefined, since_ms: since }),
+    [language, tag, since],
+  )
+
+  // `useCallback` so the effects below can depend on these honestly. Without a
+  // stable identity the dependency arrays would either lie or loop.
+  const loadPage = useCallback(
+    async (offset: number) => {
+      const result = await api.listSessions({ ...filters, limit: PAGE_SIZE, offset })
+      setTotal(result.total)
+      setHasMore(result.has_more)
+      setFacets(result.facets)
+      // Append by id rather than by index: a rename or delete may have landed
+      // between two pages, and concatenating blindly would duplicate a row.
+      setSessions((current) => {
+        if (offset === 0) return result.sessions
+        const seen = new Set(current.map((s) => s.id))
+        return [...current, ...result.sessions.filter((s) => !seen.has(s.id))]
+      })
+    },
+    [filters],
+  )
+
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     void (async () => {
-      const result = await api
-        .listSessions({ language: language || undefined, tag: tag || undefined, since_ms: since, limit: 100 })
-        .catch(() => ({ sessions: [], total: 0 }))
-      if (!cancelled) {
-        setSessions(result.sessions)
-        setLoading(false)
+      try {
+        if (!cancelled) await loadPage(0)
+      } catch {
+        if (!cancelled) {
+          setSessions([])
+          setTotal(0)
+          setHasMore(false)
+        }
+      } finally {
+        if (!cancelled) setLoading(false)
       }
     })()
     return () => {
       cancelled = true
     }
-  }, [language, tag, since])
+  }, [filters, loadPage])
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || !hasMore) return
+    setLoadingMore(true)
+    try {
+      setError(null)
+      await loadPage(sessions.length)
+    } catch (thrown) {
+      fail(thrown)
+    } finally {
+      setLoadingMore(false)
+    }
+    // `fail` closes over nothing that changes; the rest is genuine state.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadingMore, hasMore, sessions.length, loadPage])
+
+  // Fetch the next page as the end of the list comes into view. The button is
+  // the sentinel, so it still works by click — and by keyboard — if the
+  // observer never fires.
+  useEffect(() => {
+    const node = sentinel.current
+    if (!node || !hasMore) return
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) void loadMore()
+    })
+    observer.observe(node)
+    return () => observer.disconnect()
+  }, [hasMore, loadMore])
 
   // Debounced, because this runs FTS5 across every session on each keystroke.
   useEffect(() => {
@@ -125,16 +201,19 @@ export function History({ onOpen }: { onOpen: (sessionId: string, utteranceId?: 
     return () => window.clearTimeout(handle)
   }, [query])
 
-  const tags = useMemo(() => [...new Set(sessions.flatMap((s) => s.tags))].sort(), [sessions])
-  const languages = useMemo(
-    () => [...new Set(sessions.flatMap((s) => [...s.source_languages, s.target_language]))].sort(),
-    [sessions],
-  )
-
   return (
     <div className="flex h-full flex-col">
       <header className="border-line border-b px-4 py-3">
-        <h1 className="mb-3 text-lg font-semibold">{strings.history.title}</h1>
+        <div className="mb-3 flex items-baseline gap-2">
+          <h1 className="text-lg font-semibold">{strings.history.title}</h1>
+          {/* Without this the list silently ended at whatever had loaded, and
+              there was no way to tell a short history from a truncated one. */}
+          {!loading && hits === null && total > 0 && (
+            <span className="text-fg-dim text-sm" data-testid="session-count">
+              {strings.history.showing(sessions.length, total)}
+            </span>
+          )}
+        </div>
         <input
           value={query}
           onChange={(event) => setQuery(event.target.value)}
@@ -146,10 +225,10 @@ export function History({ onOpen }: { onOpen: (sessionId: string, utteranceId?: 
           <Filter value={range} onChange={setRange} label={strings.history.allTime}
             options={[['today', 'Today'], ['week', 'Last 7 days'], ['month', 'Last 30 days']]} />
           <Filter value={language} onChange={setLanguage} label={strings.history.allLanguages}
-            options={languages.map((code) => [code, code.toUpperCase()])} />
-          {tags.length > 0 && (
+            options={facets.languages.map((code) => [code, code.toUpperCase()])} />
+          {facets.tags.length > 0 && (
             <Filter value={tag} onChange={setTag} label={strings.history.tags}
-              options={tags.map((name) => [name, `#${name}`])} />
+              options={facets.tags.map((name) => [name, `#${name}`])} />
           )}
         </div>
       </header>
@@ -199,18 +278,33 @@ export function History({ onOpen }: { onOpen: (sessionId: string, utteranceId?: 
         ) : sessions.length === 0 ? (
           <EmptyState title={strings.history.empty} action={strings.history.emptyAction} icon="🎙" />
         ) : (
-          sessions.map((session) => (
-            <SessionRow
-              key={session.id}
-              session={session}
-              editing={renamingId === session.id}
-              onOpen={() => onOpen(session.id)}
-              onStartRename={() => setRenamingId(session.id)}
-              onCancelRename={() => setRenamingId(null)}
-              onRename={(title) => void rename(session, title)}
-              onDelete={() => setPendingDelete(session)}
-            />
-          ))
+          <>
+            {sessions.map((session) => (
+              <SessionRow
+                key={session.id}
+                session={session}
+                editing={renamingId === session.id}
+                onOpen={() => onOpen(session.id)}
+                onStartRename={() => setRenamingId(session.id)}
+                onCancelRename={() => setRenamingId(null)}
+                onRename={(title) => void rename(session, title)}
+                onDelete={() => setPendingDelete(session)}
+              />
+            ))}
+            {hasMore && (
+              <button
+                ref={sentinel}
+                type="button"
+                onClick={() => void loadMore()}
+                disabled={loadingMore}
+                className="text-fg-dim hover:bg-surface-2 w-full px-4 py-4 text-center text-sm disabled:opacity-60"
+              >
+                {loadingMore
+                  ? strings.common.loading
+                  : strings.history.loadMore(total - sessions.length)}
+              </button>
+            )}
+          </>
         )}
       </div>
 

@@ -84,15 +84,14 @@ async def list_sessions(
     until_ms: int | None = None,
     q: str | None = None,
 ) -> dict[str, Any]:
-    records = await services.repo.list_sessions(
-        limit=limit,
-        offset=offset,
-        language=language,
-        tag=tag,
-        since_ms=since_ms,
-        until_ms=until_ms,
-        query=q,
-    )
+    filters: dict[str, Any] = {
+        "language": language,
+        "tag": tag,
+        "since_ms": since_ms,
+        "until_ms": until_ms,
+        "query": q,
+    }
+    records = await services.repo.list_sessions(limit=limit, offset=offset, **filters)
     # The history list shows speaker count and which artifacts exist, because
     # those distinguish one conversation from another better than a weak
     # auto-generated title does (SRS §5.1).
@@ -114,7 +113,23 @@ async def list_sessions(
                 }
             )
         )
-    return {"sessions": out, "total": await services.repo.count_sessions()}
+    # `total` counts what *matches*, not what exists: the client paginates
+    # against it, and a total taken over a different set than the page makes
+    # "Load more" stop early or never stop.
+    total = await services.repo.count_sessions(**filters)
+    return {
+        "sessions": out,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        # Filter options over *every* session, not just this page — otherwise a
+        # tag used only on an old recording is unreachable until you have
+        # scrolled far enough to load it.
+        "facets": await services.repo.session_facets(),
+        # Saves the client inferring the end from a short page — which is wrong
+        # whenever the last page happens to be exactly full.
+        "has_more": offset + len(out) < total,
+    }
 
 
 @router.get("/sessions/{session_id}")
