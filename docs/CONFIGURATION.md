@@ -119,15 +119,18 @@ conversation and prefer whole sentences.
 is weighted towards English, so the smaller models degrade far faster away from
 it. Measured on a small Russian set with `droid-assistant eval`:
 
-| Model | English WER | Russian WER | RTF |
+| Model | English WER | Russian WER | RTF (CPU, M-series) |
 |---|---|---|---|
 | `tiny` | 0.0% | 19.7% | 0.05 |
-| `base` | 0.0% | 9.8% | 0.07 |
-| `small` | 0.0% | 4.9% | 0.20 |
+| `base` | 0.0% | 9.8% | 0.08 |
+| `small` | 0.0% | 4.9% | 0.18 |
+| `large-v3-turbo` | 0.0% | 3.3% | 0.37 |
 
-English barely moves; Russian improves fourfold. Do not economise on model size
-for a non-English language — and measure on your own audio, since these are
-clean synthetic recordings and optimistic in absolute terms.
+English barely moves; Russian improves sixfold. Note the cost of that: the
+largest model is still comfortably faster than realtime on CPU (RTF 0.37), so
+for Balanced and Batch mode there is rarely a reason to economise. Do not trade
+model size away for a non-English language — and measure on your own audio,
+since these are clean synthetic recordings and optimistic in absolute terms.
 
 For a language where the stock model is still weak, `droid-assistant models
 suggest --language ru` lists community fine-tunes. A fine-tune published in the

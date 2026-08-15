@@ -125,8 +125,10 @@ model shrinks. Measured with `droid-assistant eval` on a small Russian set:
 | `tiny` | 0.0% | 19.7% |
 | `base` | 0.0% | 9.8% |
 | `small` | 0.0% | 4.9% |
+| `large-v3-turbo` | 0.0% | 3.3% |
 
-English is unaffected by size here; Russian is transformed by it. So if Russian
+English is unaffected by size here; Russian is transformed by it — a sixfold
+difference between the smallest and largest. So if Russian
 looks much worse than English, **check which model you are running first** —
 `GET /api/health` reports it. Those figures come from clean synthetic speech and
 are optimistic in absolute terms; the *ratio* between sizes is the point.
