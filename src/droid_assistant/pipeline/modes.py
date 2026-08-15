@@ -6,8 +6,12 @@ switching swaps a profile object at a VAD boundary instead of tearing down and
 rebuilding a pipeline.
 
     Live      sliding window + LocalAgreement-2; partials, revised in place
-    Balanced  commit once on VAD endpoint; no partials, never revised
+    Balanced  commit once on VAD endpoint; no partials, text only ever appended
     Batch     nothing until stop; then the whole session at once
+
+Balanced and Batch both assemble *turns*: consecutive segments from one speaker
+grow a single message rather than each becoming its own. Live does not — its
+utterances are already governed by LocalAgreement.
 """
 
 from __future__ import annotations

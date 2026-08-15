@@ -149,6 +149,26 @@ def apply_vocabulary(text: str, vocabulary: list[str]) -> str:
     return text
 
 
+#: Whisper conditions on at most 224 prompt tokens. Cyrillic runs about two
+#: tokens per word, so this is a little under that in the worst case and well
+#: under it in the best — enough for the last few sentences either way.
+PROMPT_CONTEXT_CHARS = 320
+
+
+def decoding_prompt(config: StreamConfig, *, max_context_chars: int = PROMPT_CONTEXT_CHARS) -> str:
+    """The steering text for one recognition call: vocabulary, then context.
+
+    Two things are being asked of the model and they want opposite positions.
+    The vocabulary is a standing list of proper nouns (FR-ASR-8). The context is
+    the tail of the sentence this call continues, and a prompt is truncated from
+    the *front* when it overruns — so the words nearest the audio go last, where
+    they survive.
+    """
+    vocabulary = ", ".join(term for term in config.vocabulary if term.strip())
+    context = " ".join(config.context.split())[-max_context_chars:]
+    return ". ".join(part for part in (vocabulary, context) if part)
+
+
 def postprocess(
     results: list[ASRResult], config: StreamConfig, *, no_speech_threshold: float
 ) -> list[ASRResult]:

@@ -59,7 +59,12 @@ class MockDiarizationBackend:
     async def embed(self, audio: AudioBuffer) -> Embedding | None:
         if audio.duration_ms < 1000:
             return None
-        seed = int.from_bytes(hashlib.sha256(audio.samples.tobytes()[:8192]).digest()[:4], "big")
+        # Seeded from the middle of the segment, not its start. A segment begins
+        # with `speech_pad_ms` of silence, so hashing the head returns the same
+        # vector for every speaker and the clusterer sees one person all session
+        # — which would make this double agree with any pipeline at all.
+        middle = audio.samples[audio.samples.size // 2 :][:8192]
+        seed = int.from_bytes(hashlib.sha256(middle.tobytes()).digest()[:4], "big")
         rng = np.random.default_rng(seed)
         vec = rng.normal(size=EMBEDDING_DIM).astype(np.float32)
         return vec / np.linalg.norm(vec)

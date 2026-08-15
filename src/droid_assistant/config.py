@@ -136,6 +136,15 @@ class VADConfig(BaseModel):
     # Reached only when there is no detectable pause at all.
     max_speech_ms: Annotated[int, Field(ge=1000)] = 30_000
 
+    # Balanced and Batch reassemble a speaker's consecutive segments back into
+    # one utterance, so their pauses do not shatter a single turn into a dozen
+    # one-word messages. A silence longer than this ends the turn; 0 disables
+    # joining and gives one utterance per VAD segment.
+    turn_gap_ms: Annotated[int, Field(ge=0)] = 5_000
+    # ...and no turn grows past this, so a long monologue is still a sequence of
+    # readable messages rather than one wall of text.
+    max_turn_ms: Annotated[int, Field(ge=1000)] = 120_000
+
     @model_validator(mode="after")
     def _thresholds_ordered(self) -> Self:
         if self.min_silence_long_ms > self.min_silence_ms:

@@ -24,7 +24,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 import numpy as np
@@ -38,6 +38,7 @@ from ..domain import (
     SAMPLE_RATE,
     ASRResult,
     AudioBuffer,
+    Embedding,
     LatencyMode,
     Samples,
     SessionState,
@@ -102,6 +103,111 @@ class _PendingTranslation:
     source_language: str | None
 
 
+@dataclass(slots=True)
+class _Attribution:
+    """Who a completed segment belongs to, and the vector that says so."""
+
+    speaker: Speaker | None
+    embedding: Embedding | None
+    diarization_ms: float
+
+
+@dataclass(slots=True)
+class _OpenTurn:
+    """One speaker's turn, while it is still being assembled.
+
+    A VAD segment is a breath; a *message* is a turn — everything one person
+    says before someone else speaks. Keeping the turn open across their pauses
+    is what stops a conversation rendering as a column of one-word lines, and it
+    is what gives the recogniser the first half of a sentence as context for the
+    second.
+
+    Text is only ever **appended**. Nothing already on screen is rewritten, so
+    Balanced keeps the property FR-LAT-5 exists for — no partials, no words
+    changing under the reader — while the message itself is allowed to grow.
+    """
+
+    utterance: Utterance
+    speaker_index: int | None
+    #: The VAD endpoints this turn has covered. Deliberately *not* the
+    #: utterance's own timestamps: those come back from the recogniser, which
+    #: reports where it found words, routinely seconds short of where the audio
+    #: ended. Judging a pause by them measures the recogniser's silence
+    #: trimming rather than the speaker's pause, and splits a turn that never
+    #: paused at all.
+    audio_start_ms: int
+    audio_end_ms: int
+    confidence_sum: float = 0.0
+    confidence_ms: int = 0
+
+    @classmethod
+    def opened(
+        cls,
+        utterance: Utterance,
+        speaker_index: int | None,
+        result: ASRResult,
+        audio: AudioBuffer,
+        segment: SpeechSegment,
+    ) -> _OpenTurn:
+        turn = cls(
+            utterance=utterance,
+            speaker_index=speaker_index,
+            audio_start_ms=segment.start_ms,
+            audio_end_ms=segment.end_ms,
+        )
+        turn.weigh(result.confidence, audio.duration_ms)
+        return turn
+
+    def accepts(
+        self, speaker_index: int | None, segment: SpeechSegment, *, gap_ms: int, max_ms: int
+    ) -> bool:
+        """Does this segment continue the turn, or start a new message?"""
+        if gap_ms <= 0:  # joining disabled: one utterance per segment
+            return False
+        # An unattributed segment joins whatever turn is open. Diarization
+        # declines to label the shortest ones — "угу", "да", a laugh — and
+        # leaving those as speakerless messages of their own reads as a bug,
+        # which is the same call `assign_speaker` makes for the same reason.
+        if speaker_index is not None and speaker_index != self.speaker_index:
+            return False
+        if segment.start_ms - self.audio_end_ms > gap_ms:
+            return False
+        return segment.end_ms - self.audio_start_ms <= max_ms
+
+    def extend(
+        self,
+        result: ASRResult,
+        audio: AudioBuffer,
+        attribution: _Attribution,
+        segment: SpeechSegment,
+    ) -> None:
+        """Grow the utterance in place. The caller republishes it afterwards."""
+        self.audio_end_ms = max(self.audio_end_ms, segment.end_ms)
+        utterance = self.utterance
+        utterance.text = f"{utterance.text} {result.text.strip()}".strip()
+        utterance.end_ms = max(utterance.end_ms, result.end_ms)
+        utterance.words.extend(result.words)
+        utterance.language = utterance.language or result.language
+        # FR-DIA-5: a turn whose opening segment was too short to embed still
+        # needs a vector, or it cannot be renamed retroactively later.
+        if utterance.embedding is None and attribution.embedding is not None:
+            utterance.embedding = attribution.embedding
+        utterance.timings["diarization_ms"] = round(
+            utterance.timings.get("diarization_ms", 0.0) + attribution.diarization_ms, 1
+        )
+        self.weigh(result.confidence, audio.duration_ms)
+
+    def weigh(self, confidence: float | None, duration_ms: int) -> None:
+        """Confidence for a turn is the mean over its segments weighted by the
+        audio each covered, so one two-word aside cannot drag the number for a
+        minute of clean speech."""
+        if confidence is None or duration_ms <= 0:
+            return
+        self.confidence_sum += confidence * duration_ms
+        self.confidence_ms += duration_ms
+        self.utterance.confidence = self.confidence_sum / self.confidence_ms
+
+
 class SessionPipeline:
     """Owns everything that happens to one session's audio."""
 
@@ -159,6 +265,9 @@ class SessionPipeline:
         self._translation_queue: asyncio.Queue[_PendingTranslation | None] = asyncio.Queue()
         self._context: list[str] = []  # rolling source-language context (FR-TRA-3)
         self._agreement = LocalAgreement()
+        #: The message currently being added to, in the modes that assemble
+        #: turns. None between turns, and always None in Live.
+        self._turn: _OpenTurn | None = None
         self._live_partial_id: str | None = None
         self._live_segment_start_ms = 0
         self._pending_mode: LatencyMode | None = None
@@ -213,6 +322,11 @@ class SessionPipeline:
         if consume_task is not None:
             with contextlib.suppress(asyncio.CancelledError):
                 await asyncio.wait_for(consume_task, timeout=30)
+
+        # Normally the consumer closed the last message on its way out; this
+        # covers the path where it died instead, so a translation is not lost
+        # with it.
+        await self._close_turn()
 
         if self.profile.mode is LatencyMode.BATCH:
             await self.repo.update_session(self.session.id, state=SessionState.PROCESSING)
@@ -326,6 +440,7 @@ class SessionPipeline:
         )
         self._agreement.reset()
         self._live_partial_id = None
+        await self._close_turn()  # the new mode assembles messages differently
         await self.repo.update_session(self.session.id, mode=mode)
         await self.bus.publish(
             self.session.id,
@@ -357,6 +472,8 @@ class SessionPipeline:
                 got = await self._ring.wait(min_samples=frame_samples, timeout=0.5)
                 if self._pending_mode is not None and not self._segmenter.in_speech:
                     await self._apply_pending_mode()
+
+                await self._expire_turn()
 
                 if not got:
                     if self._ring.closed:
@@ -402,23 +519,42 @@ class SessionPipeline:
 
     async def _flush_open_segment(self) -> None:
         segment = self._segmenter.flush()
-        if segment is None:
-            return
-        if self.profile.emits_partials:
-            await self._finalise_live_segment(segment)
-        elif self.profile.transcribes_live:
-            await self._process_segment(segment)
+        if segment is not None:
+            if self.profile.emits_partials:
+                await self._finalise_live_segment(segment)
+            elif self.profile.transcribes_live:
+                await self._process_segment(segment)
+        # Both callers — a pause, and the end of the stream — are the end of
+        # whoever was talking, so the message they were building is over too.
+        await self._close_turn()
 
     # --- Balanced / Batch: one segment at a time ----------------------------
 
     async def _process_segment(self, segment: SpeechSegment) -> None:
-        """FR-LAT-5: recognised once, on the VAD endpoint, and never revised."""
+        """FR-LAT-5: recognised once, on the VAD endpoint, never rewritten.
+
+        The segment may land in a message that is already on screen. A speaker
+        pausing for breath is still the same speaker mid-thought, and giving
+        each breath its own line with their name over it is what turns a
+        conversation into a column of one-word messages. So the text is appended
+        to the open turn and the utterance republished under its own id, which
+        the client applies as an update.
+
+        The order here is embed → recognise → attribute, and the split matters:
+        the prompt handed to the recogniser depends on whether this is the same
+        speaker, so that question has to be answered before recognition, while
+        the answer cannot be *committed* until after — a backend that diarizes
+        for itself has seen the audio in more detail than our clustering can.
+        """
         audio = self._audio_for(segment)
         if audio.samples.size == 0:
             return
 
+        embedding, embed_ms = await self._embed(audio)
+        context = self._context_for(segment, self._clusterer.nearest(embedding))
+
         began = time.perf_counter()
-        results = await self._transcribe(audio)
+        results = await self._transcribe(audio, context=context)
         asr_ms = (time.perf_counter() - began) * 1000
         if not results:
             return
@@ -427,16 +563,91 @@ class SessionPipeline:
         if merged is None or not merged.text.strip():
             return
 
-        utterance = await self._build_utterance(
+        attribution = await self._attribute(embedding, embed_ms, speaker_index=merged.speaker)
+        await self._add_to_turn(
             merged,
             audio,
+            segment,
+            attribution,
             timings={"asr_ms": round(asr_ms, 1)},
-            # A recogniser that diarizes has seen the audio in more detail than
-            # our per-utterance clustering can; prefer its answer.
-            speaker_index=merged.speaker,
-            skip_clustering=merged.speaker is not None,
+            latency_from_ms=segment.end_ms,
         )
-        await self._commit(utterance, latency_from_ms=segment.end_ms)
+
+    # --- turn assembly ------------------------------------------------------
+
+    def _continues_turn(self, speaker_index: int | None, segment: SpeechSegment) -> bool:
+        vad = self.settings.vad
+        return self._turn is not None and self._turn.accepts(
+            speaker_index, segment, gap_ms=vad.turn_gap_ms, max_ms=vad.max_turn_ms
+        )
+
+    def _context_for(self, segment: SpeechSegment, speaker_index: int | None) -> str:
+        """What the recogniser should be told this segment continues (FR-ASR-8).
+
+        Empty unless the segment looks like more of the message already open:
+        prompting with someone else's words steers the decode towards a sentence
+        nobody spoke.
+        """
+        if self._turn is None or not self._continues_turn(speaker_index, segment):
+            return ""
+        return self._turn.utterance.text
+
+    async def _add_to_turn(
+        self,
+        result: ASRResult,
+        audio: AudioBuffer,
+        segment: SpeechSegment,
+        attribution: _Attribution,
+        *,
+        timings: dict[str, float] | None = None,
+        latency_from_ms: int | None = None,
+    ) -> None:
+        """Grow the open message, or close it and start the next one."""
+        speaker_index = attribution.speaker.index if attribution.speaker else None
+        turn = self._turn
+        if turn is not None and self._continues_turn(speaker_index, segment):
+            turn.extend(result, audio, attribution, segment)
+            await self._publish(turn.utterance, latency_from_ms=latency_from_ms)
+            return
+
+        # Someone else started, or the silence ran long. The previous message is
+        # over, and only now is its text final enough to translate.
+        await self._close_turn()
+        utterance = await self._build_utterance(
+            result, audio, timings=timings, attribution=attribution
+        )
+        await self._publish(utterance, latency_from_ms=latency_from_ms)
+        self._turn = _OpenTurn.opened(utterance, speaker_index, result, audio, segment)
+
+    async def _close_turn(self) -> None:
+        """Finish the open message. Idempotent, so it is safe wherever a turn
+        can plausibly end — a pause, a mode switch, the end of the stream."""
+        turn, self._turn = self._turn, None
+        if turn is not None:
+            await self._finish(turn.utterance)
+
+    async def _expire_turn(self) -> None:
+        """Close a message nobody has added to for `vad.turn_gap_ms` of audio.
+
+        Without this, the last thing said would stay open until the session did,
+        and its translation would wait there with it.
+
+        The clock is the *consumer's* position — how far into the recording we
+        have listened — not the ring's write position, which is how far the
+        browser has uploaded. Those two are the same only when recognition keeps
+        up with realtime. When it does not, and falling behind is the normal
+        state of a local model on a busy machine, ingest time runs seconds ahead
+        and every turn expires the instant it opens: one message per breath,
+        exactly what the joining exists to prevent.
+        """
+        turn = self._turn
+        if turn is None or self._segmenter.in_speech:
+            # Mid-sentence: leave it to the VAD endpoint, so whether the message
+            # continues depends on the real gap between segments rather than on
+            # when this happened to run.
+            return
+        if self._cache.end_ms - turn.audio_end_ms > self.settings.vad.turn_gap_ms:
+            await self._close_turn()
 
     def _extend_cache(self, buffer: AudioBuffer) -> None:
         """Append to the rolling cache and drop what is older than one segment."""
@@ -554,6 +765,11 @@ class SessionPipeline:
         Diarization runs over the entire session here, which is the accurate
         path — clustering with the whole recording available beats the
         incremental approximation the live modes must use.
+
+        Segments are assembled into turns exactly as Balanced does it, with one
+        advantage: here the speaker is known before recognition rather than
+        guessed at from a running centroid, so the decoding prompt is built on
+        an answer instead of a prediction.
         """
         samples = await self._batch_samples()
         if samples is None or samples.size == 0:
@@ -586,28 +802,40 @@ class SessionPipeline:
             audio = whole.slice_ms(segment.start_ms, segment.end_ms)
             if audio.samples.size == 0:
                 continue
-            results = await self._transcribe(audio)
+
+            # Here whole-session diarization has already answered who is
+            # speaking, which is what lets the prompt be assembled before
+            # recognition rather than guessed at.
+            predicted = (
+                assign_speaker(diarized, segment.start_ms, segment.end_ms) if diarized else None
+            )
+            context = self._context_for(segment, predicted)
+
+            results = await self._transcribe(audio, context=context)
             merged = merge_results(results)
             if merged is None or not merged.text.strip():
                 continue
-            speaker_index = merged.speaker
-            if speaker_index is None and diarized:
-                speaker_index = assign_speaker(diarized, segment.start_ms, segment.end_ms)
-            utterance = await self._build_utterance(
-                merged,
-                audio,
-                speaker_index=speaker_index,
-                skip_clustering=speaker_index is not None,
+
+            embedding, embed_ms = await self._embed(audio)
+            attribution = await self._attribute(
+                embedding,
+                embed_ms,
+                speaker_index=merged.speaker if merged.speaker is not None else predicted,
             )
-            await self._commit(utterance, latency_from_ms=None)
+            await self._add_to_turn(merged, audio, segment, attribution)
+
+        await self._close_turn()
 
     # --- shared utterance construction --------------------------------------
 
-    async def _transcribe(self, audio: AudioBuffer) -> list[ASRResult]:
+    async def _transcribe(self, audio: AudioBuffer, *, context: str = "") -> list[ASRResult]:
+        """Recognise one buffer. `context` is the text this call continues, and
+        is passed to backends that accept a decoding prompt; the rest ignore it."""
+        config = replace(self._stream_config, context=context) if context else self._stream_config
         self.stats.asr_calls += 1
         await self._bill_recognition(audio)
         try:
-            return await self.asr.transcribe(audio, self._stream_config)
+            return await self.asr.transcribe(audio, config)
         except Exception as exc:
             log.exception("ASR failed", extra={"session": self.session.id})
             await self.bus.publish(
@@ -636,6 +864,46 @@ class SessionPipeline:
         with contextlib.suppress(Exception):
             await self._on_cost("asr", amount, caps.name)
 
+    async def _embed(self, audio: AudioBuffer) -> tuple[Embedding | None, float]:
+        """The speaker vector for one completed segment, and what it cost.
+
+        Separate from attribution because the vector is needed *before*
+        recognition — it is what says whether the same person is still talking,
+        and so what the recogniser is given as its prompt — while committing to
+        a speaker cannot happen until after.
+        """
+        if self.diarization is None:
+            return None, 0.0
+        began = time.perf_counter()
+        embedding = None
+        try:
+            embedding = await self.diarization.embed(audio)
+        except Exception:
+            log.exception("embedding failed", extra={"session": self.session.id})
+        return embedding, (time.perf_counter() - began) * 1000
+
+    async def _attribute(
+        self,
+        embedding: Embedding | None,
+        embed_ms: float = 0.0,
+        *,
+        speaker_index: int | None = None,
+    ) -> _Attribution:
+        """Commit a segment to a speaker, and make sure the label exists.
+
+        A caller that already knows the index — from whole-session diarization,
+        or from a recogniser that diarizes for itself, both of which have seen
+        more of the audio than our per-utterance clustering can — passes it, and
+        the clusterer is left alone.
+        """
+        began = time.perf_counter()
+        if speaker_index is None:
+            speaker_index = self._clusterer.assign(embedding)
+        elapsed = embed_ms + (time.perf_counter() - began) * 1000
+
+        speaker = await self._speaker_for(speaker_index) if speaker_index is not None else None
+        return _Attribution(speaker=speaker, embedding=embedding, diarization_ms=round(elapsed, 1))
+
     async def _build_utterance(
         self,
         result: ASRResult,
@@ -644,27 +912,17 @@ class SessionPipeline:
         utterance_id: str | None = None,
         timings: dict[str, float] | None = None,
         speaker_index: int | None = None,
-        skip_clustering: bool = False,
+        attribution: _Attribution | None = None,
     ) -> Utterance:
-        began = time.perf_counter()
-        embedding = None
-        if self.diarization is not None:
-            try:
-                embedding = await self.diarization.embed(audio)
-            except Exception:
-                log.exception("embedding failed", extra={"session": self.session.id})
-
-        if speaker_index is None and not skip_clustering:
-            speaker_index = self._clusterer.assign(embedding)
-        diarize_ms = (time.perf_counter() - began) * 1000
-
-        speaker = await self._speaker_for(speaker_index) if speaker_index is not None else None
+        if attribution is None:
+            embedding, embed_ms = await self._embed(audio)
+            attribution = await self._attribute(embedding, embed_ms, speaker_index=speaker_index)
 
         async with self._seq_lock:
             seq = self._next_seq
             self._next_seq += 1
 
-        all_timings = {**(timings or {}), "diarization_ms": round(diarize_ms, 1)}
+        all_timings = {**(timings or {}), "diarization_ms": attribution.diarization_ms}
         return Utterance(
             id=utterance_id or new_id("utt"),
             session_id=self.session.id,
@@ -673,10 +931,10 @@ class SessionPipeline:
             end_ms=max(result.start_ms, result.end_ms),
             text=result.text.strip(),
             language=result.language,
-            speaker_id=speaker.id if speaker else None,
+            speaker_id=attribution.speaker.id if attribution.speaker else None,
             confidence=result.confidence,
             words=list(result.words),
-            embedding=embedding,
+            embedding=attribution.embedding,
             timings=all_timings,
             is_final=True,
         )
@@ -703,11 +961,22 @@ class SessionPipeline:
 
     async def _commit(self, utterance: Utterance, *, latency_from_ms: int | None) -> None:
         """Persist, then publish, then queue for translation — in that order."""
-        needs_translation = self._needs_translation(utterance)
-        utterance.translation_state = "pending" if needs_translation else "skipped"
+        await self._publish(utterance, latency_from_ms=latency_from_ms)
+        await self._finish(utterance)
 
+    async def _publish(self, utterance: Utterance, *, latency_from_ms: int | None = None) -> None:
+        """Persist, then publish.
+
+        Idempotent on the utterance id: a message that grows is republished
+        under the same id, so both the stored row and the client's copy are
+        updated in place rather than duplicated.
+
+        `latency_from_ms` is the VAD endpoint this text answers. Publishing is
+        the moment text reaches the reader, which is what NFR-PERF-2 measures,
+        and a message that grows reaches them once per segment.
+        """
+        utterance.translation_state = "pending" if self._needs_translation(utterance) else "skipped"
         await self.repo.add_utterance(utterance)
-        self.stats.utterances += 1
 
         if latency_from_ms is not None:
             # Latency against the VAD endpoint, which is the closest server-side
@@ -720,11 +989,22 @@ class SessionPipeline:
             self.session.id, EventType.UTTERANCE_FINAL, utterance.to_event_data()
         )
 
+    async def _finish(self, utterance: Utterance) -> None:
+        """The half of a commit that happens exactly once, when the text has
+        stopped growing: metering, translation context, and translation itself.
+
+        Translating a message that is still being added to would spend a call on
+        half a sentence and then show the wrong half — and the whole turn is the
+        better unit to translate anyway, since it is the one that carries the
+        agreement FR-TRA-3 exists to get right.
+        """
+        self.stats.utterances += 1
+
         self._context.append(utterance.text)
         if len(self._context) > 64:
             del self._context[:-64]
 
-        if needs_translation:
+        if utterance.translation_state == "pending":
             await self._translation_queue.put(
                 _PendingTranslation(utterance=utterance, source_language=utterance.language)
             )

@@ -59,30 +59,47 @@ class OnlineSpeakerClusterer:
     max_speakers: int | None = None
     clusters: list[Cluster] = field(default_factory=list)
 
-    def assign(self, embedding: Embedding | None) -> int | None:
-        """Return a stable speaker index, or None when there is nothing to go on."""
+    def nearest(self, embedding: Embedding | None) -> int | None:
+        """The index this embedding *would* be given, without giving it.
+
+        The live modes need the answer before recognition, because it decides
+        whether a segment continues the message already on screen and therefore
+        whether the recogniser gets that message as its prompt. The assignment
+        itself has to wait until afterwards, when a diarizing ASR backend may
+        have overruled us — so the two are separate calls.
+
+        None means only "no vector to judge by". A speaker who is genuinely new
+        comes back as the index they would be given, which is nobody's current
+        index, so a caller comparing indices sees the change.
+        """
         if embedding is None or embedding.size == 0:
             return None
-        vec = _unit(embedding)
-
         if not self.clusters:
-            self.clusters.append(Cluster(index=0, centroid=vec))
             return 0
 
+        vec = _unit(embedding)
         similarities = [float(np.dot(vec, c.centroid)) for c in self.clusters]
         best = int(np.argmax(similarities))
-        best_similarity = similarities[best]
 
         at_capacity = self.max_speakers is not None and len(self.clusters) >= self.max_speakers
-        if best_similarity >= self.threshold or at_capacity:
+        if similarities[best] >= self.threshold or at_capacity:
             # FR-DIA-3: with an exact count pinned, never invent a further
             # speaker — force the nearest existing one instead.
-            self.clusters[best].absorb(vec)
             return self.clusters[best].index
+        return len(self.clusters)
 
-        cluster = Cluster(index=len(self.clusters), centroid=vec)
-        self.clusters.append(cluster)
-        return cluster.index
+    def assign(self, embedding: Embedding | None) -> int | None:
+        """Return a stable speaker index, or None when there is nothing to go on."""
+        index = self.nearest(embedding)
+        if index is None or embedding is None:
+            return None
+        vec = _unit(embedding)
+        for cluster in self.clusters:
+            if cluster.index == index:
+                cluster.absorb(vec)
+                return index
+        self.clusters.append(Cluster(index=index, centroid=vec))
+        return index
 
     @property
     def speaker_count(self) -> int:

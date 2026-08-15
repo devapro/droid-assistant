@@ -19,7 +19,7 @@ from typing import Any
 
 from ...config import ASRConfig
 from ...domain import ASRCapabilities, ASRResult, AudioBuffer, StreamConfig, Word
-from .base import ASRBackend, postprocess
+from .base import ASRBackend, decoding_prompt, postprocess
 
 log = logging.getLogger(__name__)
 
@@ -226,7 +226,7 @@ class FasterWhisperBackend(ASRBackend):
                 word_timestamps=self._config.word_timestamps,
                 condition_on_previous_text=self._config.condition_on_previous_text,
                 no_speech_threshold=self._config.no_speech_threshold,
-                initial_prompt=", ".join(config.vocabulary) or None,  # FR-ASR-8
+                initial_prompt=decoding_prompt(config) or None,  # FR-ASR-8
                 vad_filter=False,  # the pipeline has already gated on Silero
             )
             out: list[ASRResult] = []

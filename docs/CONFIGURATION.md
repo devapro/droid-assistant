@@ -80,6 +80,32 @@ reasoning with a measurement.
 | `min_silence_long_ms` | `180` | That shorter pause. Must be ≤ `min_silence_ms` |
 | `force_split_after_ms` | `12000` | Past this, cut at the quietest moment seen even if no pause arrives at all |
 | `max_speech_ms` | `30000` | Absolute backstop, so a monologue is never one enormous utterance |
+| `turn_gap_ms` | `5000` | Balanced and Batch. A speaker's consecutive segments are rejoined into one message unless they paused longer than this. `0` keeps one message per segment |
+| `max_turn_ms` | `120000` | …and no rejoined message grows past this |
+
+**Why segments are rejoined.** A VAD segment is a breath, but a *message* is a
+turn: everything one person says before someone else speaks. Left as segments,
+a conversation renders as a column of one-word lines with the same name over
+each, and continuous speech renders as a new message every
+`soft_max_speech_ms`. So Balanced and Batch reassemble them, which buys two
+things:
+
+* the utterance already published is **updated** as its turn grows, rather than
+  another one being added per breath;
+* every segment after the first is recognised with the turn so far as its
+  decoding prompt, so the second half of a sentence comes back agreeing with
+  the first. Backends that accept a prompt — `faster_whisper`, `whisper_cpp`,
+  `openai` — use it; the rest ignore it and only the joining applies.
+
+Text is only ever **appended**: nothing already on screen is rewritten, which is
+the property FR-LAT-5 exists for. Live is left alone — LocalAgreement already
+governs how its utterances settle.
+
+Two consequences worth knowing. A message is translated once, when it closes,
+so translations land up to `turn_gap_ms` later than they used to — on whole
+turns, which is also what FR-TRA-3's context exists to get right. And a
+monologue merges up to `max_turn_ms`; lower it if you want shorter blocks with
+more timestamps to navigate by.
 
 **Why three ceilings.** Conversation pauses constantly, so `min_silence_ms`
 alone segments it well. Continuous speech does not: a narrated video, a lecture,

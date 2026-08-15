@@ -45,7 +45,7 @@ from ...config import (
     OpenAIASRConfig,
 )
 from ...domain import ASRCapabilities, ASRResult, AudioBuffer, StreamConfig, Word
-from .base import ASRBackend, ASRStream, postprocess
+from .base import ASRBackend, ASRStream, decoding_prompt, postprocess
 
 log = logging.getLogger(__name__)
 
@@ -107,9 +107,9 @@ class OpenAIASRBackend(ASRBackend):
         return "json"
 
     def _prompt(self, config: StreamConfig) -> str:
-        """Steering text: the operator's standing prompt plus this session's
-        vocabulary (FR-ASR-8)."""
-        parts = [p for p in (self._config.prompt, ", ".join(config.vocabulary)) if p.strip()]
+        """Steering text: the operator's standing prompt, then this session's
+        vocabulary and the utterance being continued (FR-ASR-8)."""
+        parts = [p for p in (self._config.prompt, decoding_prompt(config)) if p.strip()]
         return ". ".join(parts)
 
     async def transcribe(self, audio: AudioBuffer, config: StreamConfig) -> list[ASRResult]:

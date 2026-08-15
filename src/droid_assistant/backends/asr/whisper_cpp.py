@@ -17,7 +17,7 @@ from typing import Any
 
 from ...config import ASRConfig
 from ...domain import ASRCapabilities, ASRResult, AudioBuffer, StreamConfig
-from .base import ASRBackend, postprocess
+from .base import ASRBackend, decoding_prompt, postprocess
 from .faster_whisper import WHISPER_LANGUAGES
 
 log = logging.getLogger(__name__)
@@ -72,7 +72,7 @@ class WhisperCppBackend(ASRBackend):
                 language=config.pinned_language or "auto",
                 n_threads=0,  # 0 ⇒ the library's own default for this machine
                 translate=False,
-                initial_prompt=", ".join(config.vocabulary) or None,
+                initial_prompt=decoding_prompt(config) or None,
             )
             return [
                 ASRResult(

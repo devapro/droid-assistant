@@ -203,6 +203,13 @@ class StreamConfig:
     vocabulary: list[str] = field(default_factory=list)  # FR-ASR-8
     mode: LatencyMode = LatencyMode.BALANCED
     serbian_script: Literal["latin", "cyrillic"] = "latin"  # FR-ASR-10
+    #: What has already been recognised in the utterance this call continues.
+    #: Balanced and Batch fill it when one speaker's turn spans several VAD
+    #: segments: a backend that accepts a decoding prompt then transcribes the
+    #: rest of the sentence knowing how it started, which is what keeps a name,
+    #: a number, or a case ending consistent across a pause. Empty for the first
+    #: segment of a turn, and for backends that cannot be prompted.
+    context: str = ""
 
     @property
     def pinned_language(self) -> str | None:
