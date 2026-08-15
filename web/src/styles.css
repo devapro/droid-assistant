@@ -1,0 +1,85 @@
+@import 'tailwindcss';
+
+/*
+ * Both themes are designed rather than one being a filter over the other
+ * (FR-UI-11). Dark is the default because recording happens in meeting rooms
+ * and at desks in the evening; light follows the device, with a manual override
+ * in Settings.
+ *
+ * Every pair below meets WCAG AA against its own surface.
+ */
+@theme {
+  --color-surface-0: #0b0f14;
+  --color-surface-1: #121821;
+  --color-surface-2: #1a222d;
+  --color-surface-3: #253040;
+  --color-line: #2b3644;
+  --color-fg: #e6edf5;
+  --color-fg-dim: #94a3b4;
+  --color-accent: #3aa3e3;
+  --color-danger: #e5484d;
+  --color-warn: #e2a03f;
+  --color-good: #3dd68c;
+}
+
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --color-surface-0: #ffffff;
+    --color-surface-1: #f7f9fb;
+    --color-surface-2: #eef2f6;
+    --color-surface-3: #e2e8f0;
+    --color-line: #d6dee7;
+    --color-fg: #0f172a;
+    --color-fg-dim: #5a6a7d;
+    --color-accent: #0072b2;
+    --color-danger: #c02529;
+    --color-warn: #9a6700;
+    --color-good: #106b45;
+  }
+}
+
+:root[data-theme='light'] {
+  --color-surface-0: #ffffff;
+  --color-surface-1: #f7f9fb;
+  --color-surface-2: #eef2f6;
+  --color-surface-3: #e2e8f0;
+  --color-line: #d6dee7;
+  --color-fg: #0f172a;
+  --color-fg-dim: #5a6a7d;
+  --color-accent: #0072b2;
+  --color-danger: #c02529;
+  --color-warn: #9a6700;
+  --color-good: #106b45;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-surface-0);
+  color: var(--color-fg);
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* No horizontal scrolling anywhere, at any width (FR-UI-5). */
+  overflow-x: hidden;
+  overscroll-behavior-y: none;
+}
+
+/* Visible focus throughout, for keyboard and switch users. */
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

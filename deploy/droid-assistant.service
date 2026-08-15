@@ -1,0 +1,56 @@
+# systemd unit for a native (non-Docker) install.
+#
+#   sudo cp deploy/droid-assistant.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now droid-assistant
+#
+# `Restart=always` plus `WantedBy=multi-user.target` is what makes a power cut a
+# reboot rather than an outage (SRS §8.5). On a mini PC, also enable
+# "restore on AC loss" in the BIOS — systemd cannot start a machine that is off.
+
+[Unit]
+Description=droid-assistant — self-hosted conversation intelligence
+Documentation=https://github.com/arsenii/droid-assistant
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=droid
+Group=droid
+WorkingDirectory=/opt/droid-assistant
+
+# Point this at a USB SSD on Pi-class hardware. SD cards fail under sustained
+# write and take the entire history with them (SRS §5.9).
+Environment="DROID_DATA_DIR=/var/lib/droid-assistant"
+Environment="DROID_LOG_JSON=1"
+EnvironmentFile=-/etc/droid-assistant/env
+
+ExecStart=/usr/local/bin/uv run --directory /opt/droid-assistant droid-assistant serve
+
+Restart=always
+RestartSec=5
+# A long stop gives an in-flight session time to finalise and flush its audio
+# rather than being truncated mid-sentence.
+TimeoutStopSec=90
+KillSignal=SIGTERM
+
+# Model loading is memory-hungry; being OOM-killed mid-meeting is worse than
+# swapping.
+OOMScoreAdjust=-500
+
+# Hardening. The service needs its data directory and nothing else.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/droid-assistant
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,958 @@
+<title>droid-assistant SRS</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+:root {
+  color-scheme: light dark;
+
+  --paper:       #F2F5F4;
+  --surface:     #FFFFFF;
+  --surface-2:   #EAEFED;
+  --ink:         #101917;
+  --ink-2:       #46544F;
+  --ink-3:       #75847E;
+  --rule:        #D9E2DD;
+  --rule-strong: #BCC9C3;
+
+  --accent:      #0A6B57;
+  --accent-ink:  #075042;
+  --accent-soft: #E0EEE9;
+
+  --amber:       #8F5605;
+  --amber-soft:  #F8EEDC;
+  --red:         #A02A21;
+  --red-soft:    #F8E6E3;
+
+  --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+
+  --measure: 74ch;
+  --rail: 16.5rem;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper:       #0D1413;
+    --surface:     #141F1C;
+    --surface-2:   #1A2724;
+    --ink:         #E6EDE9;
+    --ink-2:       #A5B4AD;
+    --ink-3:       #7A8983;
+    --rule:        #23312C;
+    --rule-strong: #33443E;
+
+    --accent:      #4FD0AE;
+    --accent-ink:  #7BE0C4;
+    --accent-soft: #142A24;
+
+    --amber:       #E3AC63;
+    --amber-soft:  #2A2013;
+    --red:         #F0897C;
+    --red-soft:    #2E1815;
+  }
+}
+
+:root[data-theme="dark"] {
+  --paper:       #0D1413;
+  --surface:     #141F1C;
+  --surface-2:   #1A2724;
+  --ink:         #E6EDE9;
+  --ink-2:       #A5B4AD;
+  --ink-3:       #7A8983;
+  --rule:        #23312C;
+  --rule-strong: #33443E;
+
+  --accent:      #4FD0AE;
+  --accent-ink:  #7BE0C4;
+  --accent-soft: #142A24;
+
+  --amber:       #E3AC63;
+  --amber-soft:  #2A2013;
+  --red:         #F0897C;
+  --red-soft:    #2E1815;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.62;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ---------- masthead ---------- */
+
+.masthead {
+  border-bottom: 1px solid var(--rule);
+  background: var(--surface);
+}
+
+.masthead-inner {
+  max-width: 78rem;
+  margin: 0 auto;
+  padding: 1.6rem 1.75rem 1.5rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.6rem 1.5rem;
+}
+
+.wordmark {
+  font-family: var(--mono);
+  font-size: 1.02rem;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.wordmark span { color: var(--accent); }
+
+.masthead-title {
+  font-size: 0.95rem;
+  color: var(--ink-2);
+  margin-right: auto;
+}
+
+.meta {
+  display: flex;
+  gap: 1.1rem;
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.meta b {
+  color: var(--ink-2);
+  font-weight: 600;
+}
+
+/* ---------- shell ---------- */
+
+.shell {
+  max-width: 78rem;
+  margin: 0 auto;
+  padding: 0 1.75rem 6rem;
+  display: grid;
+  grid-template-columns: var(--rail) minmax(0, 1fr);
+  gap: 3.25rem;
+  align-items: start;
+}
+
+/* ---------- section rail ---------- */
+
+.rail {
+  position: sticky;
+  top: 1.75rem;
+  max-height: calc(100vh - 3.5rem);
+  overflow-y: auto;
+  padding: 2.25rem 0 2rem;
+  font-size: 0.855rem;
+}
+
+.rail-label {
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+  padding-bottom: 0.7rem;
+  border-bottom: 1px solid var(--rule);
+  margin-bottom: 0.8rem;
+}
+
+.rail a {
+  display: block;
+  padding: 0.26rem 0 0.26rem 0.85rem;
+  border-left: 2px solid transparent;
+  color: var(--ink-2);
+  text-decoration: none;
+  line-height: 1.4;
+}
+
+.rail a:hover {
+  color: var(--accent-ink);
+  border-left-color: var(--rule-strong);
+}
+
+.rail a.lvl3 {
+  padding-left: 1.7rem;
+  font-size: 0.79rem;
+  color: var(--ink-3);
+}
+
+.rail a.active {
+  color: var(--accent-ink);
+  border-left-color: var(--accent);
+  font-weight: 600;
+}
+
+/* ---------- content ---------- */
+
+.doc {
+  padding: 2.5rem 0 0;
+  min-width: 0;
+}
+
+.doc > * { max-width: var(--measure); }
+.doc > .tablewrap,
+.doc > .codewrap { max-width: none; }
+
+h1, h2, h3, h4 {
+  text-wrap: balance;
+  line-height: 1.22;
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(1.95rem, 1.4rem + 1.7vw, 2.65rem);
+  letter-spacing: -0.026em;
+  font-weight: 680;
+  margin-bottom: 0.9rem;
+}
+
+h2 {
+  font-size: 1.42rem;
+  letter-spacing: -0.017em;
+  font-weight: 650;
+  margin-top: 3.9rem;
+  padding-top: 1.4rem;
+  border-top: 1px solid var(--rule);
+  position: relative;
+}
+
+h2::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 0;
+  width: 2.6rem;
+  height: 2px;
+  background: var(--accent);
+}
+
+h3 {
+  font-size: 1.06rem;
+  letter-spacing: -0.008em;
+  font-weight: 650;
+  margin-top: 2.5rem;
+  color: var(--ink);
+}
+
+h4 {
+  font-size: 0.93rem;
+  font-weight: 650;
+  margin-top: 1.9rem;
+  color: var(--ink-2);
+}
+
+p { margin: 1rem 0; }
+
+.doc > h1 + p {
+  font-size: 1.03rem;
+  color: var(--ink-2);
+}
+
+a {
+  color: var(--accent-ink);
+  text-decoration-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  text-underline-offset: 0.18em;
+}
+
+a:hover { text-decoration-color: var(--accent); }
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+  border-radius: 2px;
+}
+
+strong { font-weight: 650; color: var(--ink); }
+
+ul, ol {
+  margin: 1rem 0;
+  padding-left: 1.35rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.42rem;
+}
+
+li { padding-left: 0.15rem; }
+li::marker { color: var(--ink-3); }
+
+hr {
+  border: 0;
+  border-top: 1px solid var(--rule);
+  margin: 2.6rem 0;
+  max-width: var(--measure);
+}
+
+h2 + hr, h1 + hr { display: none; }
+
+blockquote {
+  margin: 1.6rem 0;
+  padding: 0.95rem 1.2rem;
+  border-left: 2px solid var(--accent);
+  background: var(--accent-soft);
+  border-radius: 0 5px 5px 0;
+  color: var(--ink-2);
+  font-size: 0.93rem;
+}
+
+blockquote > :first-child { margin-top: 0; }
+blockquote > :last-child { margin-bottom: 0; }
+blockquote strong { color: var(--ink); }
+
+/* ---------- code ---------- */
+
+code {
+  font-family: var(--mono);
+  font-size: 0.845em;
+  background: var(--surface-2);
+  border-radius: 3px;
+  padding: 0.12em 0.36em;
+  color: var(--ink);
+}
+
+.codewrap {
+  margin: 1.5rem 0;
+  overflow-x: auto;
+  background: var(--surface);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+}
+
+pre {
+  margin: 0;
+  padding: 1.1rem 1.25rem;
+  min-width: min-content;
+}
+
+pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.795rem;
+  line-height: 1.62;
+  color: var(--ink-2);
+  white-space: pre;
+}
+
+/* ---------- tables ---------- */
+
+.tablewrap {
+  margin: 1.6rem 0;
+  overflow-x: auto;
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  background: var(--surface);
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.855rem;
+  font-variant-numeric: tabular-nums;
+}
+
+th {
+  text-align: left;
+  font-family: var(--mono);
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
+  color: var(--ink-3);
+  padding: 0.72rem 0.95rem;
+  border-bottom: 1px solid var(--rule-strong);
+  white-space: nowrap;
+  background: var(--surface-2);
+}
+
+td {
+  padding: 0.68rem 0.95rem;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+tbody tr:last-child td { border-bottom: 0; }
+td strong { color: var(--ink); }
+
+/* ---------- spec vocabulary ---------- */
+
+.rid, .ms, .pri {
+  font-family: var(--mono);
+  font-size: 0.735rem;
+  white-space: nowrap;
+}
+
+.rid {
+  color: var(--ink);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.ms {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-2);
+}
+
+.pri {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.4rem;
+  height: 1.4rem;
+  border-radius: 3px;
+  font-weight: 700;
+}
+
+.pri-must   { background: var(--accent-soft); color: var(--accent-ink); }
+.pri-should { background: var(--surface-2);   color: var(--ink-2); }
+.pri-could  { background: var(--amber-soft);  color: var(--amber); }
+.pri-wont   { background: var(--red-soft);    color: var(--red); }
+
+/* ---------- responsive ---------- */
+
+@media (max-width: 62rem) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+    padding: 0 1.25rem 4rem;
+  }
+  .rail {
+    position: static;
+    max-height: none;
+    overflow: visible;
+    padding: 1.75rem 0 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .rail-nav {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+    gap: 0 1rem;
+    padding-bottom: 1.25rem;
+  }
+  .rail a.lvl3 { display: none; }
+  .doc { padding-top: 2rem; }
+  .masthead-inner { padding: 1.25rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; }
+}
+
+html { scroll-behavior: smooth; }
+h1, h2, h3 { scroll-margin-top: 1.5rem; }
+</style>
+
+<header class="masthead">
+  <div class="masthead-inner">
+    <div class="wordmark">droid<span>-</span>assistant</div>
+    <div class="masthead-title">Software Requirements Specification</div>
+    <div class="meta">
+      <span><b>v1.4 (draft)</b></span>
+      <span>2026-08-14</span>
+      <span><b>For review</b></span>
+    </div>
+  </div>
+</header>
+
+<div class="shell">
+  <nav class="rail" aria-label="Sections">
+    <div class="rail-label">Contents</div>
+    <div class="rail-nav"><a class="lvl2" href="#1-introduction">1. Introduction</a><a class="lvl3" href="#11-purpose">1.1 Purpose</a><a class="lvl3" href="#12-scope">1.2 Scope</a><a class="lvl3" href="#13-definitions">1.3 Definitions</a><a class="lvl3" href="#14-references">1.4 References</a><a class="lvl2" href="#2-overall-description">2. Overall description</a><a class="lvl3" href="#21-product-perspective">2.1 Product perspective</a><a class="lvl3" href="#22-user-classes">2.2 User classes</a><a class="lvl3" href="#23-operating-environment">2.3 Operating environment</a><a class="lvl3" href="#24-design-constraints">2.4 Design constraints</a><a class="lvl3" href="#25-assumptions">2.5 Assumptions</a><a class="lvl2" href="#3-functional-requirements">3. Functional requirements</a><a class="lvl3" href="#31-client-capture">3.1 Client capture</a><a class="lvl3" href="#32-server-side-signal-processing">3.2 Server-side signal processing</a><a class="lvl3" href="#33-speech-recognition">3.3 Speech recognition</a><a class="lvl3" href="#34-latency-modes">3.4 Latency modes</a><a class="lvl3" href="#35-speaker-diarization">3.5 Speaker diarization</a><a class="lvl3" href="#36-translation">3.6 Translation</a><a class="lvl3" href="#37-session-management">3.7 Session management</a><a class="lvl3" href="#38-plugin-system">3.8 Plugin system</a><a class="lvl3" href="#39-user-interface">3.9 User interface</a><a class="lvl3" href="#310-configuration">3.10 Configuration</a><a class="lvl3" href="#311-import--export">3.11 Import / export</a><a class="lvl2" href="#4-non-functional-requirements">4. Non-functional requirements</a><a class="lvl3" href="#41-performance">4.1 Performance</a><a class="lvl3" href="#42-accuracy">4.2 Accuracy</a><a class="lvl3" href="#43-resource-limits">4.3 Resource limits</a><a class="lvl3" href="#44-security">4.4 Security</a><a class="lvl3" href="#45-consent-and-legal">4.5 Consent and legal</a><a class="lvl3" href="#46-reliability">4.6 Reliability</a><a class="lvl3" href="#47-portability-and-installability">4.7 Portability and installability</a><a class="lvl3" href="#48-maintainability">4.8 Maintainability</a><a class="lvl3" href="#49-evaluation">4.9 Evaluation</a><a class="lvl2" href="#5-external-interfaces">5. External interfaces</a><a class="lvl3" href="#51-user-interface">5.1 User interface</a><a class="lvl3" href="#52-http-api-sketch">5.2 HTTP API (sketch)</a><a class="lvl3" href="#53-audio-ingest-protocol">5.3 Audio ingest protocol</a><a class="lvl3" href="#54-live-event-stream">5.4 Live event stream</a><a class="lvl3" href="#55-plugin-api-contract">5.5 Plugin API contract</a><a class="lvl3" href="#56-backend-interfaces">5.6 Backend interfaces</a><a class="lvl3" href="#57-audio-transport">5.7 Audio transport</a><a class="lvl3" href="#58-data-model">5.8 Data model</a><a class="lvl3" href="#59-storage-layout">5.9 Storage layout</a><a class="lvl2" href="#6-architecture-and-technology">6. Architecture and technology</a><a class="lvl3" href="#61-component-diagram">6.1 Component diagram</a><a class="lvl3" href="#62-technology-choices-and-rejected-alternatives">6.2 Technology choices and rejected alternatives</a><a class="lvl3" href="#63-server-hardware-tiers">6.3 Server hardware tiers</a><a class="lvl3" href="#64-why-the-browser-client-is-enough">6.4 Why the browser client is enough</a><a class="lvl2" href="#7-decision-record-where-does-the-computation-run">7. Decision record: where does the computation run?</a><a class="lvl3" href="#context">Context</a><a class="lvl3" href="#investigation">Investigation</a><a class="lvl3" href="#decision">Decision</a><a class="lvl3" href="#consequences">Consequences</a><a class="lvl3" href="#if-this-is-ever-revisited">If this is ever revisited</a><a class="lvl2" href="#8-deployment">8. Deployment</a><a class="lvl3" href="#81-install">8.1 Install</a><a class="lvl3" href="#82-https-is-mandatory">8.2 HTTPS is mandatory</a><a class="lvl3" href="#83-first-run-checklist">8.3 First-run checklist</a><a class="lvl3" href="#84-recording-well">8.4 Recording well</a><a class="lvl3" href="#85-running-it-always-on">8.5 Running it always-on</a><a class="lvl2" href="#9-roadmap">9. Roadmap</a><a class="lvl3" href="#v1--working-system">v1 — Working system</a><a class="lvl3" href="#v2--depth">v2 — Depth</a><a class="lvl3" href="#v3--breadth">v3 — Breadth</a><a class="lvl3" href="#explicitly-never">Explicitly never</a><a class="lvl2" href="#10-risks-and-open-questions">10. Risks and open questions</a><a class="lvl2" href="#11-appendices">11. Appendices</a><a class="lvl3" href="#111-on-device-asr-assessment-detail">11.1 On-device ASR assessment (detail)</a><a class="lvl3" href="#112-model-comparison-matrix-server-side">11.2 Model comparison matrix (server-side)</a><a class="lvl3" href="#113-hardware-notes">11.3 Hardware notes</a><a class="lvl3" href="#114-document-conventions">11.4 Document conventions</a><a class="lvl2" href="#open-questions-for-the-maintainer">Open questions for the maintainer</a></div>
+  </nav>
+  <main class="doc">
+<h1 id="software-requirements-specification--droid-assistant">Software Requirements Specification — droid-assistant</h1>
+<p><strong>Version:</strong> 1.4 (draft) <strong>Date:</strong> 2026-08-14 <strong>Status:</strong> For review <strong>Project:</strong> <code>droid-assistant</code> — a self-hosted conversation intelligence agent with a browser-based client</p>
+<blockquote><p><strong>Changes in 1.4.</strong> The server is now specified as a <strong>dedicated always-on machine</strong> (<a href="#63-server-hardware-tiers">§6.3</a>, <a href="#85-running-it-always-on">§8.5</a>), which closes R12. Hardware tiers restructured around how much of the pipeline runs locally, with Raspberry Pi 4 documented honestly as a host that implies cloud ASR. Adds pause/resume (FR-CAP-16), offline capture with deferred sync (FR-CAP-17), moment marking (FR-CAP-18), session presets (FR-SES-14), search over artifacts (FR-SES-10), completion notifications (FR-UI-17), a pre-flight check (FR-UI-18), clipboard/share (FR-UI-19), string externalisation (FR-UI-20), cost tracking (FR-CFG-7), backend hot-swap (FR-CFG-8), and translation batching (FR-TRA-9). Fixes an internal contradiction: partial hypotheses cannot carry a speaker label (FR-DIA-10), and the §5.1 wireframe is corrected. New risk R13 covers Russian–English code-switching.</p>
+<p><strong>Changes in 1.3.</strong> Added <a href="#51-user-interface">§5.1</a>, a screen-level user-interface specification covering the recording view, history, session detail, and settings, with wireframes, states, and interaction rules. Former §5.1–5.8 shift down by one. Five interface requirements added (FR-UI-12 … FR-UI-16).</p>
+<p><strong>Changes in 1.2.</strong> The LLM provider is OpenAI, via the <code>openai</code> SDK; the OpenAI-compatible request shape doubles as the local-model path (Ollama, vLLM, llama.cpp). Privacy and data-handling features are out of scope for now: retention policies, cloud-egress redaction, at-rest encryption documentation, per-session data-egress display, and per-person deletion are removed. Client buffer cleanup survives as FR-CAP-15 because it is a storage-correctness requirement, not a privacy one. <a href="#45-consent-and-legal">§4.5</a> is reduced to the three items that cost no implementation work.</p>
+<p><strong>Changes in 1.1.</strong> Capture moved from the server to the browser client. Native Android is out of scope permanently. HTTPS is now a v1 requirement rather than a phase-2 option. Accuracy targets are split by microphone condition and revised downward for near-field capture. See <a href="#7-decision-record-where-does-the-computation-run">§7</a> for the reasoning.</p></blockquote>
+<hr />
+<hr />
+<h2 id="1-introduction">1. Introduction</h2>
+<h3 id="11-purpose">1.1 Purpose</h3>
+<p>This document specifies the requirements for <strong>droid-assistant</strong>, a self-hosted system in which a user opens a web page on any device, presses record, and watches a speaker-attributed, optionally translated transcript appear live. An extensible plugin system runs over the resulting conversation to produce summaries, action items, and anything else a plugin author writes.</p>
+<p>It is written for the project maintainer, prospective contributors, and anyone deciding whether to deploy the system.</p>
+<h3 id="12-scope">1.2 Scope</h3>
+<p><strong>In scope</strong></p>
+<ul><li>Audio capture <strong>in the browser</strong>, on phone or desktop, streamed to a self-hosted server</li><li>Speech-to-text with configurable or automatic language detection</li><li>Speaker diarization (segmenting <em>who spoke when</em>)</li><li>Translation of transcribed text into a target language, near-live</li><li>Session persistence, browsing, editing, and search</li><li>A plugin system that receives conversation events and produces artifacts</li><li>A single web application serving as recorder, live viewer, session browser, and settings UI</li><li>Deployment as an open-source project other people can install and run</li></ul>
+<p><strong>Out of scope — permanently</strong></p>
+<ul><li><strong>A native mobile application.</strong> The web client is the only client. See <a href="#7-decision-record-where-does-the-computation-run">§7</a></li><li><strong>On-device speech recognition.</strong> All ASR happens on the server</li><li>Text-to-speech or spoken translation output</li><li>Server-side audio device capture (no USB microphone attached to the server)</li><li>Video capture or analysis</li><li>Multi-tenant SaaS hosting, billing, or account management</li></ul>
+<p><strong>Out of scope for v1, planned later</strong></p>
+<ul><li>Speaker identification by name via voice enrollment (v2)</li><li>Semantic search across sessions (v2)</li><li>Meeting-platform bot integration</li></ul>
+<h3 id="13-definitions">1.3 Definitions</h3>
+<div class="tablewrap"><table><thead><tr><th>Term</th><th>Meaning</th></tr></thead><tbody><tr><td><strong>ASR</strong></td><td>Automatic Speech Recognition — audio to text</td></tr><tr><td><strong>Diarization</strong></td><td>Segmenting audio by speaker; produces anonymous labels (<code>Speaker 1</code>, <code>Speaker 2</code>)</td></tr><tr><td><strong>Speaker identification</strong></td><td>Mapping a diarized segment to a <em>named</em> person via an enrolled voiceprint</td></tr><tr><td><strong>VAD</strong></td><td>Voice Activity Detection — deciding whether a frame contains speech</td></tr><tr><td><strong>Utterance</strong></td><td>A contiguous speech segment from one speaker, bounded by VAD endpoints</td></tr><tr><td><strong>WER</strong></td><td>Word Error Rate — ASR accuracy metric (lower is better)</td></tr><tr><td><strong>DER</strong></td><td>Diarization Error Rate — speaker-attribution accuracy metric (lower is better)</td></tr><tr><td><strong>Session</strong></td><td>One recording from start to stop, with its transcript, speakers, and artifacts</td></tr><tr><td><strong>Artifact</strong></td><td>A plugin output attached to a session (summary, action item list, …)</td></tr><tr><td><strong>Latency mode</strong></td><td>One of three pipeline profiles trading latency against accuracy and cost</td></tr><tr><td><strong>Secure context</strong></td><td>A browser origin permitted to use privileged APIs — HTTPS, <code>localhost</code>, or <code>127.0.0.1</code></td></tr><tr><td><strong>Wake Lock</strong></td><td>A browser API that prevents the screen from sleeping, keeping a recording tab alive</td></tr><tr><td><strong>Desk condition</strong></td><td>Client device within ~0.5 m of the speaker — a laptop or a phone held close</td></tr><tr><td><strong>Table condition</strong></td><td>Client device ~1.5 m from several speakers — a phone lying on a meeting table</td></tr></tbody></table></div>
+<h3 id="14-references">1.4 References</h3>
+<ul><li>W3C Secure Contexts, Media Capture and Streams, Web Audio (AudioWorklet), and Screen Wake Lock specifications</li><li>Macháček, Dabre &amp; Bojar, <em>Turning Whisper into Real-Time Transcription System</em> (2023) — the LocalAgreement-2 streaming policy</li><li>Bredin et al., <code>pyannote.audio</code> speaker diarization pipelines</li><li>IEEE 830-1998 (structure, loosely followed)</li></ul>
+<hr />
+<h2 id="2-overall-description">2. Overall description</h2>
+<h3 id="21-product-perspective">2.1 Product perspective</h3>
+<p>droid-assistant is a <strong>thin client / self-hosted server</strong> application. The browser captures audio and renders results; a server the operator controls performs all recognition, diarization, translation, and plugin execution, and stores everything.</p>
+<p>The division is deliberate and is the central architectural finding of this specification: <strong>no phone can currently run good-quality live speech recognition for Russian and Serbian with speaker diarization</strong>, so the phone is a microphone and a screen, not a brain (<a href="#7-decision-record-where-does-the-computation-run">§7</a>).</p>
+<p>It is not a meeting-platform bot. It hears what a person in the room hears, which is why it works for an in-person meeting, a face-to-face translated conversation, a dictated note, and an online call played through room speakers, with no per-platform integration.</p>
+<h3 id="22-user-classes">2.2 User classes</h3>
+<div class="tablewrap"><table><thead><tr><th>Class</th><th>Description</th><th>Technical level</th><th>Priority</th></tr></thead><tbody><tr><td><strong>Operator</strong></td><td>Installs, configures, and runs the server. Owns the hardware and the data</td><td>Comfortable with Docker or a Python toolchain</td><td>Primary</td></tr><tr><td><strong>Recorder</strong></td><td>Opens the web page and records. May be the operator or someone they&#x27;ve given access to</td><td>None</td><td>Primary</td></tr><tr><td><strong>Participant</strong></td><td>Anyone whose speech is captured. Has no account, but has consent rights</td><td>None</td><td>Primary (legally)</td></tr><tr><td><strong>Plugin author</strong></td><td>Writes Python plugins against the event API</td><td>Python developer</td><td>Secondary</td></tr><tr><td><strong>Contributor</strong></td><td>Extends the core: ASR backends, UI, pipeline stages</td><td>Python + TypeScript developer</td><td>Secondary</td></tr></tbody></table></div>
+<h3 id="23-operating-environment">2.3 Operating environment</h3>
+<p><strong>Server</strong></p>
+<ul><li>Linux (x86-64, arm64) or macOS (Apple Silicon, Intel). Windows best-effort</li><li>Python 3.12+</li><li>Reachable from client devices over HTTPS (see <a href="#82-https-is-mandatory">§8.2</a>)</li><li>Internet access required only when cloud ASR or cloud LLM features are enabled</li></ul>
+<p><strong>Client</strong></p>
+<div class="tablewrap"><table><thead><tr><th>Browser</th><th>Capture</th><th>Wake Lock</th><th>Verdict</th></tr></thead><tbody><tr><td>Chrome / Edge, desktop</td><td>Yes</td><td>Yes</td><td>Fully supported</td></tr><tr><td>Chrome, Android</td><td>Yes</td><td>Yes</td><td>Fully supported</td></tr><tr><td>Firefox, desktop</td><td>Yes</td><td>Yes</td><td>Fully supported</td></tr><tr><td>Safari, macOS 14+</td><td>Yes</td><td>Yes</td><td>Supported</td></tr><tr><td>Safari, iOS 16.4+</td><td>Yes</td><td>Yes</td><td><strong>Degraded</strong> — aggressive background suspension; recording requires the tab to stay foregrounded</td></tr><tr><td>Any browser over plain HTTP on a LAN IP</td><td><strong>No</strong></td><td>—</td><td><code>getUserMedia</code> is unavailable outside a secure context</td></tr></tbody></table></div>
+<h3 id="24-design-constraints">2.4 Design constraints</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Constraint</th></tr></thead><tbody><tr><td><span class="rid">C-1</span></td><td>Audio capture happens in the browser. The server has no audio device</td></tr><tr><td><span class="rid">C-2</span></td><td>The server must be reachable over HTTPS, or via <code>localhost</code> when the browser runs on the server itself</td></tr><tr><td><span class="rid">C-3</span></td><td>The system must function with no internet connection — server and client on the same LAN, local ASR, no cloud LLM — at reduced capability and with no code changes</td></tr><tr><td><span class="rid">C-4</span></td><td>Raw audio must never leave the operator&#x27;s server unless they explicitly enable a cloud ASR backend</td></tr><tr><td><span class="rid">C-5</span></td><td>The plugin API must be stable enough that a third-party plugin survives a minor version bump</td></tr><tr><td><span class="rid">C-6</span></td><td>Default dependencies must carry licenses compatible with an open-source release. Non-commercial models (e.g. NLLB-200) ship only as clearly-labelled opt-ins</td></tr><tr><td><span class="rid">C-7</span></td><td>Everything must install and run without a GPU, at reduced capability</td></tr><tr><td><span class="rid">C-8</span></td><td>No native mobile application will be built. Browser limitations are mitigated, not escaped</td></tr></tbody></table></div>
+<h3 id="25-assumptions">2.5 Assumptions</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Assumption</th><th>If false</th></tr></thead><tbody><tr><td><span class="rid">A-1</span></td><td>The server is a dedicated always-on machine that boots on power and starts the service automatically (<a href="#63-server-hardware-tiers">§6.3</a>)</td><td>Recording becomes unreliable in exactly the moments it matters; FR-CAP-17 (offline capture) moves from <em>should</em> to <em>must</em></td></tr><tr><td><span class="rid">A-2</span></td><td>Sessions are typically 15–120 minutes</td><td>Client-side buffering and storage budgets need revisiting</td></tr><tr><td><span class="rid">A-3</span></td><td>Typical group size is 2–6 speakers</td><td>Diarization targets in <a href="#42-accuracy">§4.2</a> do not hold beyond ~8 speakers</td></tr><tr><td><span class="rid">A-4</span></td><td>Recording usually happens on wifi, not metered mobile data</td><td>Bandwidth becomes a primary constraint; the Opus transport mode (<a href="#57-audio-transport">§5.7</a>) becomes mandatory rather than optional</td></tr><tr><td><span class="rid">A-5</span></td><td>The operator is legally permitted to record the conversations they capture</td><td>See <a href="#45-consent-and-legal">§4.5</a> — the system assists but cannot guarantee this</td></tr></tbody></table></div>
+<hr />
+<h2 id="3-functional-requirements">3. Functional requirements</h2>
+<p>Priority follows MoSCoW: <strong>M</strong>ust, <strong>S</strong>hould, <strong>C</strong>ould, <strong>W</strong>on&#x27;t (this release). Milestone indicates the target version.</p>
+<h3 id="31-client-capture">3.1 Client capture</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Priority</th><th>Milestone</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead><tbody><tr><td><span class="rid">FR-CAP-1</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The client shall capture microphone audio via <code>getUserMedia</code> after an explicit user gesture</td><td>Pressing Record prompts for permission on first use; audio frames reach the server within 1 s</td></tr><tr><td><span class="rid">FR-CAP-2</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The client shall let the user choose among available input devices where the browser exposes them</td><td>A laptop with a built-in mic and a USB mic offers both; the selection persists across sessions</td></tr><tr><td><span class="rid">FR-CAP-3</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The client shall resample captured audio to 16 kHz mono before transmission</td><td>A 48 kHz stereo device produces a 16 kHz mono stream, verified server-side</td></tr><tr><td><span class="rid">FR-CAP-4</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Audio processing shall use an <code>AudioWorklet</code>, not the deprecated <code>ScriptProcessorNode</code></td><td>No <code>ScriptProcessorNode</code> appears in the shipped bundle; capture does not block the main thread</td></tr><tr><td><span class="rid">FR-CAP-5</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The client shall stream audio to the server over WebSocket with sequence numbers</td><td>The server detects a gap in sequence numbers and requests retransmission</td></tr><tr><td><span class="rid">FR-CAP-6</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The client shall buffer audio locally when the connection drops, and resume without losing the gap</td><td>Disabling the network for 30 s mid-session and restoring it produces a transcript with no missing audio</td></tr><tr><td><span class="rid">FR-CAP-7</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The client shall acquire a Screen Wake Lock while recording, and release it on stop</td><td>On Android Chrome, a 30-minute recording with no interaction completes without the screen locking or capture stopping</td></tr><tr><td><span class="rid">FR-CAP-8</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The client shall warn the user when Wake Lock is unavailable and explain the consequence</td><td>On a browser without Wake Lock support, a notice states that the screen must stay on</td></tr><tr><td><span class="rid">FR-CAP-9</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The client shall detect that capture has stopped unexpectedly and surface it prominently</td><td>Revoking mic permission mid-session shows an unmissable error, and the session is preserved up to that point</td></tr><tr><td><span class="rid">FR-CAP-10</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The client shall display live input level metering</td><td>A silent room shows a resting meter; speech moves it within 200 ms</td></tr><tr><td><span class="rid">FR-CAP-11</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>The client shall let the user disable browser-native echo cancellation, noise suppression, and auto-gain per session</td><td>All three constraints are settable; the chosen values are recorded in session metadata</td></tr><tr><td><span class="rid">FR-CAP-12</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>The client shall warn before starting a long session on a metered connection</td><td>On a connection reporting as metered, a notice shows the estimated data use per hour</td></tr><tr><td><span class="rid">FR-CAP-13</span></td><td><span class="pri pri-could">C</span></td><td><span class="ms">v2</span></td><td>The system shall accept an uploaded audio file and process it as a batch session</td><td>Uploading WAV/MP3/M4A produces a complete session with transcript and artifacts</td></tr><tr><td><span class="rid">FR-CAP-14</span></td><td><span class="pri pri-wont">W</span></td><td>—</td><td>Server-side audio device capture</td><td>Withdrawn in v1.1 — the server has no microphone (C-1)</td></tr><tr><td><span class="rid">FR-CAP-15</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Locally buffered audio shall be released once the server acknowledges it, and cleared entirely when a session ends or is abandoned</td><td>After a session ends, no audio for it remains in browser storage; a 4-hour session never exceeds the buffer cap (NFR-RES-5)</td></tr><tr><td><span class="rid">FR-CAP-16</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Recording shall be pausable and resumable within one session, without ending it</td><td>Pausing for 5 minutes and resuming produces one session whose transcript contains no utterances from the paused interval and whose timeline reflects the gap</td></tr><tr><td><span class="rid">FR-CAP-17</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>When the server is unreachable, the client shall still record, storing audio locally and uploading it once the server returns</td><td>With the server stopped, pressing Record starts a local session; restarting the server uploads it and produces a complete transcript. Requires the app shell to be service-worker cached so it loads without the server</td></tr><tr><td><span class="rid">FR-CAP-18</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>The user shall be able to mark the current moment during recording with one interaction</td><td>Tapping Mark flags the utterance in progress; flagged utterances are visually distinct and filterable in the session view</td></tr></tbody></table></div>
+<h3 id="32-server-side-signal-processing">3.2 Server-side signal processing</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Priority</th><th>Milestone</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead><tbody><tr><td><span class="rid">FR-SIG-1</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The server shall buffer incoming audio in a bounded ring buffer that drops oldest data rather than growing without limit</td><td>Under a stalled consumer, memory stays within the configured buffer size; drops are counted and logged</td></tr><tr><td><span class="rid">FR-SIG-2</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The server shall apply VAD and forward only speech regions to ASR, with configurable pre/post padding</td><td>On a 10-minute stream containing 2 minutes of speech, ASR runs on ≤ 3 minutes of audio</td></tr><tr><td><span class="rid">FR-SIG-3</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>The server shall persist session audio to disk in a configurable codec</td><td>A completed session yields a playable file whose duration matches the session ± 1 s</td></tr><tr><td><span class="rid">FR-SIG-4</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>The server shall report per-stage processing latency per utterance</td><td>Every utterance carries timings for VAD, ASR, diarization, and translation</td></tr></tbody></table></div>
+<h3 id="33-speech-recognition">3.3 Speech recognition</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Priority</th><th>Milestone</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead><tbody><tr><td><span class="rid">FR-ASR-1</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>ASR shall run behind a pluggable backend interface selected by configuration</td><td>Changing backend in config and restarting changes the engine with no code change; <code>GET /api/health</code> reports the active backend</td></tr><tr><td><span class="rid">FR-ASR-2</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>At least one fully local backend shall ship by default and require no network access</td><td>With the server&#x27;s internet disabled, a session transcribes successfully</td></tr><tr><td><span class="rid">FR-ASR-3</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>At least one cloud streaming backend shall be supported</td><td>With credentials configured, a session transcribes via cloud and the UI indicates audio is leaving the server</td></tr><tr><td><span class="rid">FR-ASR-4</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Each utterance shall carry start and end timestamps relative to session start</td><td>Every utterance has <code>start_ms &lt; end_ms</code>, monotonically non-decreasing across the session</td></tr><tr><td><span class="rid">FR-ASR-5</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>Word-level timestamps shall be produced where the backend supports them</td><td>Clicking a word seeks playback to within 300 ms of it</td></tr><tr><td><span class="rid">FR-ASR-6</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Each utterance shall carry a language code (BCP-47), detected or configured</td><td>A session mixing Russian and English yields utterances tagged <code>ru</code> and <code>en</code></td></tr><tr><td><span class="rid">FR-ASR-7</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The user shall be able to pin expected languages per session</td><td>A session pinned to <code>sr</code> never emits utterances tagged as another language</td></tr><tr><td><span class="rid">FR-ASR-8</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>The system shall accept a per-session custom vocabulary and pass it to the backend</td><td>With &quot;Arsenii&quot; in the vocabulary, that name transcribes correctly in ≥ 80% of occurrences on the eval clip, against a measured baseline</td></tr><tr><td><span class="rid">FR-ASR-9</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>Known hallucination patterns on silence and non-speech shall be suppressed</td><td>On 5 minutes of room tone, zero utterances are emitted</td></tr><tr><td><span class="rid">FR-ASR-10</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Serbian output shall be normalised to a configured script (Cyrillic or Latin)</td><td>A Serbian session configured for Latin contains no Cyrillic characters</td></tr><tr><td><span class="rid">FR-ASR-11</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v2</span></td><td>A per-utterance confidence score shall be reported</td><td>Every utterance carries a confidence in <code>[0,1]</code>; the UI marks those below a configurable threshold</td></tr></tbody></table></div>
+<h3 id="34-latency-modes">3.4 Latency modes</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Priority</th><th>Milestone</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead><tbody><tr><td><span class="rid">FR-LAT-1</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Three latency modes shall be supported: <strong>Live</strong>, <strong>Balanced</strong>, and <strong>Batch</strong></td><td>All three produce a complete transcript</td></tr><tr><td><span class="rid">FR-LAT-2</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The mode shall be selectable before a session starts</td><td>The chosen mode is applied and recorded in session metadata</td></tr><tr><td><span class="rid">FR-LAT-3</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>The mode shall be changeable during a running session</td><td>Switching completes within 5 s, loses no committed utterance, and records the transition point</td></tr><tr><td><span class="rid">FR-LAT-4</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>In Live mode, partial hypotheses shall be emitted and may be revised before finalisation</td><td>The UI shows text updating in place; <code>utterance.final</code> supersedes prior <code>utterance.partial</code> with the same ID</td></tr><tr><td><span class="rid">FR-LAT-5</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>In Balanced mode, utterances shall be emitted once, on VAD endpoint, and never revised by ASR</td><td>No <code>utterance.partial</code> events are emitted</td></tr><tr><td><span class="rid">FR-LAT-6</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>In Batch mode, no transcription shall occur until the session is stopped</td><td>Only elapsed time and metering appear during recording; the transcript appears after stopping</td></tr><tr><td><span class="rid">FR-LAT-7</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>The UI shall display the active mode and its cost and quality implication</td><td>Each mode shows its latency target and whether it uses cloud services under current configuration</td></tr></tbody></table></div>
+<h3 id="35-speaker-diarization">3.5 Speaker diarization</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Priority</th><th>Milestone</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead><tbody><tr><td><span class="rid">FR-DIA-1</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Every utterance shall be attributed to a speaker label stable within the session</td><td>In a 3-person conversation, the same person keeps the same label throughout</td></tr><tr><td><span class="rid">FR-DIA-2</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Diarization shall require no prior enrollment and shall infer the speaker count automatically</td><td>A session with an unknown speaker count produces a plausible count without configuration</td></tr><tr><td><span class="rid">FR-DIA-3</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>The user shall be able to set a known speaker count or a min/max range per session</td><td>Setting &quot;exactly 2&quot; on a 2-person recording never produces a third label</td></tr><tr><td><span class="rid">FR-DIA-4</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Speaker labels shall be renamable in the UI, retroactively across the session</td><td>Renaming <code>Speaker 2</code> to <code>Anna</code> updates every utterance and artifact reference</td></tr><tr><td><span class="rid">FR-DIA-5</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>A speaker embedding shall be stored for every utterance from v1 onward</td><td>≥ 95% of utterances longer than 1 s carry a non-null embedding</td></tr><tr><td><span class="rid">FR-DIA-6</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>The diarization backend shall be pluggable</td><td>A second backend is selectable by configuration alone</td></tr><tr><td><span class="rid">FR-DIA-7</span></td><td><span class="pri pri-could">C</span></td><td><span class="ms">v2</span></td><td>Voice enrollment shall map stored embeddings to named people</td><td>After enrolling a person, new sessions label them by name without manual renaming</td></tr><tr><td><span class="rid">FR-DIA-8</span></td><td><span class="pri pri-could">C</span></td><td><span class="ms">v2</span></td><td>Enrollment shall apply retroactively on operator request</td><td>A re-attribution job labels the enrolled person in sessions recorded before enrollment</td></tr><tr><td><span class="rid">FR-DIA-9</span></td><td><span class="pri pri-could">C</span></td><td><span class="ms">v2</span></td><td>Voiceprints shall be deletable per person, purging all their stored embeddings</td><td>After deletion, no embedding attributable to that person remains</td></tr><tr><td><span class="rid">FR-DIA-10</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Speaker attribution shall be defined per latency mode: partial hypotheses carry <strong>no</strong> speaker, because diarization requires a completed segment; attribution is assigned on finalisation and never changes thereafter</td><td>In Live mode a partial renders with an explicit unknown-speaker state, never a guess that later flips; in Balanced and Batch modes every utterance carries a speaker on first appearance</td></tr></tbody></table></div>
+<h3 id="36-translation">3.6 Translation</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Priority</th><th>Milestone</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead><tbody><tr><td><span class="rid">FR-TRA-1</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Utterances shall be translated into a configured target language</td><td>With target <code>en</code>, Russian utterances carry an English translation</td></tr><tr><td><span class="rid">FR-TRA-2</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The original transcript shall always be retained; translation shall never overwrite it</td><td>Every translated utterance exposes both <code>text</code> and <code>translation</code></td></tr><tr><td><span class="rid">FR-TRA-3</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Translation shall use rolling conversational context of at least the previous <em>N</em> utterances</td><td>Pronoun and gender agreement is correct in a reviewed 20-utterance RU→EN sample where the referent is in a prior utterance</td></tr><tr><td><span class="rid">FR-TRA-4</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Translation shall be streamed to the client as it completes, per utterance, not batched to session end</td><td>Median translation appears within the <a href="#41-performance">NFR-PERF-4</a> budget after its utterance</td></tr><tr><td><span class="rid">FR-TRA-5</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>Utterances already in the target language shall not be translated</td><td>An English utterance in an EN-target session incurs no translation call</td></tr><tr><td><span class="rid">FR-TRA-6</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>A fully local translation backend shall be available</td><td>With the server&#x27;s internet disabled, translation still produces output</td></tr><tr><td><span class="rid">FR-TRA-7</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>The UI shall support original-only, translation-only, and side-by-side views</td><td>All three render correctly on desktop and mobile widths</td></tr><tr><td><span class="rid">FR-TRA-8</span></td><td><span class="pri pri-could">C</span></td><td><span class="ms">v2</span></td><td>A per-speaker target language shall be configurable</td><td>In a bilingual conversation, each participant&#x27;s view shows the other&#x27;s speech in their own language</td></tr><tr><td><span class="rid">FR-TRA-9</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>Consecutive short utterances shall be batched into a single translation request, within a configurable latency ceiling</td><td>A rapid exchange of one-word utterances issues fewer requests than utterances, without any translation exceeding the NFR-PERF-4 budget</td></tr></tbody></table></div>
+<h3 id="37-session-management">3.7 Session management</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Priority</th><th>Milestone</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead><tbody><tr><td><span class="rid">FR-SES-1</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Sessions shall be startable and stoppable from the client and the API</td><td>Both paths create a session record with start and end timestamps</td></tr><tr><td><span class="rid">FR-SES-2</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Sessions shall persist across server restarts</td><td>Killing and restarting the server preserves all completed sessions and artifacts</td></tr><tr><td><span class="rid">FR-SES-3</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>An interrupted session shall be recoverable with all utterances committed before the interruption</td><td>Force-killing the server mid-session leaves a readable session containing all finalised utterances</td></tr><tr><td><span class="rid">FR-SES-4</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>A session whose client disconnects shall be finalised automatically after a configurable grace period</td><td>Closing the browser tab mid-session ends the session cleanly after the grace period, not indefinitely later</td></tr><tr><td><span class="rid">FR-SES-5</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Multiple clients shall be able to view a live session while one records</td><td>A laptop watching a session recorded by a phone sees utterances within the same latency budget</td></tr><tr><td><span class="rid">FR-SES-6</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Sessions shall carry editable metadata: title, participants, tags, language configuration</td><td>All fields are editable post-hoc and persist</td></tr><tr><td><span class="rid">FR-SES-7</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>A session title shall be auto-generated if none is supplied</td><td>Every session has a non-empty title after it ends</td></tr><tr><td><span class="rid">FR-SES-8</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Transcript text shall be editable, persisted, and marked as edited</td><td>An edited utterance is flagged; the original remains retrievable</td></tr><tr><td><span class="rid">FR-SES-9</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Editing a transcript shall allow re-running plugins over the corrected text</td><td>Re-running produces a new artifact version; prior versions remain accessible</td></tr><tr><td><span class="rid">FR-SES-10</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Full-text search across all sessions shall cover <strong>both transcripts and artifacts</strong></td><td>Searching a phrase that appears only in a generated summary returns that summary; searching one that appears only in speech returns the utterance. Both are highlighted</td></tr><tr><td><span class="rid">FR-SES-11</span></td><td><span class="pri pri-could">C</span></td><td><span class="ms">v2</span></td><td>Semantic search across all sessions shall be supported</td><td>A conceptual query returns relevant utterances sharing no literal terms with the query</td></tr><tr><td><span class="rid">FR-SES-12</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Sessions shall be deletable, purging transcript, artifacts, audio, and embeddings</td><td>After deletion, no residual row or file for that session remains</td></tr><tr><td><span class="rid">FR-SES-13</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Any past session shall be openable from the history list and shall present its full transcript with speaker labels, its metadata, its artifacts, and its audio</td><td>Opening a session recorded a month earlier renders the complete speaker-labelled transcript, its summary and action items, and a working player (FR-UI-8)</td></tr><tr><td><span class="rid">FR-SES-14</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Named presets shall capture language pair, latency mode, expected speaker count, vocabulary, and plugin selection, and start a session in one interaction</td><td>Selecting a saved preset and pressing Record starts a correctly configured session with no further choices. The most recently used configuration is the default when no preset is chosen</td></tr></tbody></table></div>
+<h3 id="38-plugin-system">3.8 Plugin system</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Priority</th><th>Milestone</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead><tbody><tr><td><span class="rid">FR-PLG-1</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Plugins shall be discovered from a <code>plugins/</code> directory and from installed packages declaring an entry point</td><td>A plugin file dropped into <code>plugins/</code> loads on restart with no other change</td></tr><tr><td><span class="rid">FR-PLG-2</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Plugins shall subscribe to documented events and receive typed payloads</td><td>A plugin subscribing only to <code>session.end</code> is not invoked for other events</td></tr><tr><td><span class="rid">FR-PLG-3</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>A plugin raising an exception shall be disabled for the session without affecting the pipeline or other plugins</td><td>With a deliberately crashing plugin installed, the session completes and the UI shows the plugin as failed</td></tr><tr><td><span class="rid">FR-PLG-4</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Each handler invocation shall be bounded by a configurable timeout</td><td>A plugin sleeping past its timeout is cancelled and reported; the session is unaffected</td></tr><tr><td><span class="rid">FR-PLG-5</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Plugins shall declare a configuration schema, rendered automatically by the UI as a settings form</td><td>A plugin with three typed config fields shows three correctly-typed inputs with validation</td></tr><tr><td><span class="rid">FR-PLG-6</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Plugins shall be individually enabled or disabled without restarting the server</td><td>Toggling takes effect on the next session</td></tr><tr><td><span class="rid">FR-PLG-7</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Plugins shall emit artifacts attached to the session</td><td>An emitted artifact appears in the UI and via <code>GET /api/sessions/{id}/artifacts</code></td></tr><tr><td><span class="rid">FR-PLG-8</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Plugins shall receive a configured LLM client rather than constructing their own</td><td>A plugin performs an LLM call with no credential handling of its own, respecting global budget and local-only settings</td></tr><tr><td><span class="rid">FR-PLG-9</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Plugin execution shall not block the live transcript path</td><td>With a plugin running for 60 s, live utterances continue to appear within the normal latency budget</td></tr><tr><td><span class="rid">FR-PLG-10</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>A <strong>meeting summary</strong> plugin shall ship as a reference implementation</td><td>On a 30-minute recording it produces a structured summary within the configured timeout</td></tr><tr><td><span class="rid">FR-PLG-11</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>An <strong>action items</strong> plugin shall ship as a reference implementation</td><td>It produces action items with text and, where identifiable, owner and due date</td></tr><tr><td><span class="rid">FR-PLG-12</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>Artifacts shall be versioned; re-running shall not destroy prior output</td><td>After two runs both versions are retrievable and the current one is indicated</td></tr><tr><td><span class="rid">FR-PLG-13</span></td><td><span class="pri pri-could">C</span></td><td><span class="ms">v2</span></td><td>Outbound webhooks shall let non-Python consumers subscribe to events</td><td>A configured webhook receives a signed POST for each subscribed event</td></tr></tbody></table></div>
+<h3 id="39-user-interface">3.9 User interface</h3>
+<p>Screen-by-screen layout, states, and interaction behaviour are specified in <a href="#51-user-interface">§5.1</a>. The requirements below are the testable obligations that section must satisfy.</p>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Priority</th><th>Milestone</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead><tbody><tr><td><span class="rid">FR-UI-1</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The UI shall display a live transcript updating without a page refresh</td><td>In Balanced mode, new utterances appear within 1 s of being finalised server-side</td></tr><tr><td><span class="rid">FR-UI-2</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The UI shall visually distinguish speakers</td><td>Each speaker has a stable, distinguishable colour and label</td></tr><tr><td><span class="rid">FR-UI-3</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The UI shall show a persistent, unmistakable recording indicator whenever capture is active</td><td>The indicator is visible on every view while recording and cannot be dismissed</td></tr><tr><td><span class="rid">FR-UI-4</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Record/stop, device selection, language configuration, and latency mode shall be reachable within two interactions from the main view</td><td>Verified on a 375 px viewport</td></tr><tr><td><span class="rid">FR-UI-5</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The recording view shall be usable one-handed on a phone</td><td>Primary controls sit within thumb reach at 375 × 667 px; no horizontal scrolling anywhere</td></tr><tr><td><span class="rid">FR-UI-6</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The UI shall show connection state and buffered-audio backlog during recording</td><td>Disconnecting the network shows a reconnecting state and a growing buffered count; reconnection clears both</td></tr><tr><td><span class="rid">FR-UI-7</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>A session list with search and filtering by date, tag, and language shall be provided</td><td>Filtering narrows correctly on a corpus of ≥ 100 sessions</td></tr><tr><td><span class="rid">FR-UI-8</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>An audio player synchronised with the transcript shall be provided</td><td>Clicking an utterance seeks to it; playback highlights the current utterance</td></tr><tr><td><span class="rid">FR-UI-9</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>Errors from capture, ASR, and plugins shall surface as notifications with actionable text</td><td>Each error class names the component and suggests a remedy</td></tr><tr><td><span class="rid">FR-UI-10</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>The client shall be installable as a PWA</td><td>On the HTTPS origin, the install prompt appears and the app launches standalone</td></tr><tr><td><span class="rid">FR-UI-11</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>The UI shall render correctly in both light and dark themes</td><td>Both themes meet WCAG AA contrast for all text</td></tr><tr><td><span class="rid">FR-UI-12</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Record, History, and Settings shall each be reachable in one interaction from any screen, and Record shall be the landing view</td><td>Cold-loading the app leaves Stop/Record one tap away; each destination is one tap from each other</td></tr><tr><td><span class="rid">FR-UI-13</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The live transcript shall stay pinned to the newest utterance until the user scrolls away, then offer an explicit return</td><td>Scrolling up during recording holds position while new utterances arrive; a jump-to-live control restores the pin</td></tr><tr><td><span class="rid">FR-UI-14</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>A translation that has not arrived yet shall render as pending and be visually distinct from one that failed</td><td>With translation deliberately delayed, the row shows a pending state; with it erroring, the row shows a distinguishable failed state</td></tr><tr><td><span class="rid">FR-UI-15</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>Every list and search view shall define an empty state that says what to do next</td><td>Empty history and a zero-result search each render purpose-written copy, not a blank area</td></tr><tr><td><span class="rid">FR-UI-16</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>Speaker colours shall come from a fixed colourblind-safe ordered palette, stable per speaker index across views, and shall never be the only carrier of speaker identity</td><td>The same speaker index renders the same colour in live, history, and detail views; every utterance also shows a textual label</td></tr><tr><td><span class="rid">FR-UI-17</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>The client shall notify the user when post-processing completes for a session they are no longer watching</td><td>Stopping a Batch session and closing the tab produces a notification when the transcript and artifacts are ready, where the browser permits it</td></tr><tr><td><span class="rid">FR-UI-18</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Before recording starts the client shall confirm server reachability and microphone level, and block with an actionable message if either fails</td><td>With the server stopped, Record reports it and offers local recording (FR-CAP-17); with a muted or absent microphone, Record reports that instead of starting a silent session</td></tr><tr><td><span class="rid">FR-UI-19</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>Artifacts shall be copyable to the clipboard and shareable via the platform share sheet, in one interaction</td><td>Copy places the rendered summary on the clipboard; on a platform exposing <code>navigator.share</code>, Share opens the native sheet</td></tr><tr><td><span class="rid">FR-UI-20</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>All interface strings shall be externalised for translation. v1 ships English only</td><td>No user-facing string is hard-coded in a component; adding a locale file changes the interface language with no code change</td></tr></tbody></table></div>
+<h3 id="310-configuration">3.10 Configuration</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Priority</th><th>Milestone</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead><tbody><tr><td><span class="rid">FR-CFG-1</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Configuration shall be file-based (TOML), overridable by environment variables</td><td>Both work; environment variables take precedence</td></tr><tr><td><span class="rid">FR-CFG-2</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Configuration shall be validated at startup with field-level error messages</td><td>An invalid value fails startup naming the field, the value, and the accepted range</td></tr><tr><td><span class="rid">FR-CFG-3</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>The language list offered in the UI shall be operator-editable, not hard-coded</td><td>Adding a language code to config makes it selectable without a code change</td></tr><tr><td><span class="rid">FR-CFG-4</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Credentials shall never appear in logs, artifacts, or API responses</td><td>No key material appears at any log level</td></tr><tr><td><span class="rid">FR-CFG-5</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>A global &quot;local only&quot; switch shall disable every outbound network call</td><td>With it enabled no outbound connection is attempted; cloud-dependent plugins report as unavailable</td></tr><tr><td><span class="rid">FR-CFG-6</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>Cloud usage shall be switchable per session as well as globally</td><td>A session marked local-only performs no cloud calls even when cloud is globally enabled</td></tr><tr><td><span class="rid">FR-CFG-7</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>Cloud spend shall be tracked per session and displayed, with a configurable ceiling that falls back to local processing when reached</td><td>A session shows its accumulated cost; on exceeding the ceiling it continues locally and reports the switch rather than failing</td></tr><tr><td><span class="rid">FR-CFG-8</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>Changing the ASR, translation, or LLM backend shall take effect on the next session without restarting the server</td><td>Switching ASR backend in Settings and starting a new session uses the new backend; the running session is unaffected</td></tr></tbody></table></div>
+<h3 id="311-import--export">3.11 Import / export</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Priority</th><th>Milestone</th><th>Requirement</th><th>Acceptance criteria</th></tr></thead><tbody><tr><td><span class="rid">FR-EXP-1</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Sessions shall be exportable as Markdown</td><td>Export contains speaker-labelled transcript, metadata, and artifacts</td></tr><tr><td><span class="rid">FR-EXP-2</span></td><td><span class="pri pri-must">M</span></td><td><span class="ms">v1</span></td><td>Sessions shall be exportable as JSON with full fidelity</td><td>Round-tripping export → import reproduces the session</td></tr><tr><td><span class="rid">FR-EXP-3</span></td><td><span class="pri pri-should">S</span></td><td><span class="ms">v1</span></td><td>Sessions shall be exportable as subtitle files (SRT/VTT)</td><td>The exported file plays in sync with the exported audio</td></tr><tr><td><span class="rid">FR-EXP-4</span></td><td><span class="pri pri-could">C</span></td><td><span class="ms">v2</span></td><td>Artifacts shall be pushable to external destinations via plugins</td><td>A reference file-writer plugin writes a Markdown artifact to a configured directory</td></tr></tbody></table></div>
+<hr />
+<h2 id="4-non-functional-requirements">4. Non-functional requirements</h2>
+<h3 id="41-performance">4.1 Performance</h3>
+<p>Latency is measured <strong>from end of spoken word to text visible in the client browser</strong>, and therefore includes network transit. Measured on Tier A server hardware (<a href="#63-server-hardware-tiers">§6.3</a>) with client and server on the same LAN.</p>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Requirement</th></tr></thead><tbody><tr><td><span class="rid">NFR-PERF-1</span></td><td><strong>Live mode:</strong> median partial-hypothesis latency ≤ 2.5 s; p95 ≤ 5 s</td></tr><tr><td><span class="rid">NFR-PERF-2</span></td><td><strong>Balanced mode:</strong> median utterance latency ≤ 4 s from VAD endpoint; p95 ≤ 10 s</td></tr><tr><td><span class="rid">NFR-PERF-3</span></td><td><strong>Batch mode:</strong> total processing ≤ 0.3× session duration on Tier A; ≤ 1.0× on Tier B</td></tr><tr><td><span class="rid">NFR-PERF-4</span></td><td>Translation shall appear within 2 s of its utterance (median) and 5 s (p95)</td></tr><tr><td><span class="rid">NFR-PERF-5</span></td><td>Client-to-server audio transit on LAN shall add ≤ 150 ms; over Tailscale on the same continent, ≤ 400 ms</td></tr><tr><td><span class="rid">NFR-PERF-6</span></td><td>Client capture shall drop no audio while the tab is foregrounded and the connection is healthy; drops are counted and shown</td></tr><tr><td><span class="rid">NFR-PERF-7</span></td><td>The client shall recover from a 60 s network outage with no audio loss, given sufficient local buffer</td></tr><tr><td><span class="rid">NFR-PERF-8</span></td><td>The UI shall stay responsive with a 2000-utterance session loaded (virtualised rendering; no interaction blocked &gt; 100 ms)</td></tr><tr><td><span class="rid">NFR-PERF-9</span></td><td>Full-text search across 500 sessions shall return in ≤ 500 ms</td></tr><tr><td><span class="rid">NFR-PERF-10</span></td><td>Mode switching mid-session shall complete within 5 s and lose no finalised utterance</td></tr><tr><td><span class="rid">NFR-PERF-11</span></td><td>Client CPU use during capture shall stay low enough to avoid thermal throttling over a 60-minute session on a mid-range phone</td></tr></tbody></table></div>
+<h3 id="42-accuracy">4.2 Accuracy</h3>
+<p>Targets are split by microphone condition, because a phone on a meeting table and a laptop at arm&#x27;s length are very different acoustic problems. All figures are <strong>targets to be validated against the project&#x27;s evaluation corpus</strong> (<a href="#49-evaluation">§4.9</a>), not commitments — Serbian in particular is an open question (<a href="#10-risks-and-open-questions">R1</a>).</p>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Metric</th><th>Desk condition</th><th>Table condition</th></tr></thead><tbody><tr><td><span class="rid">NFR-ACC-1</span></td><td>WER, English, Balanced mode</td><td>≤ 10%</td><td>≤ 16%</td></tr><tr><td><span class="rid">NFR-ACC-2</span></td><td>WER, Russian, Balanced mode</td><td>≤ 15%</td><td>≤ 22%</td></tr><tr><td><span class="rid">NFR-ACC-3</span></td><td>WER, Serbian, Balanced mode — <strong>provisional pending R1</strong></td><td>≤ 25%</td><td>≤ 35%</td></tr><tr><td><span class="rid">NFR-ACC-4</span></td><td>DER, 2–3 speakers, minimal overlap</td><td>≤ 15%</td><td>≤ 22%</td></tr><tr><td><span class="rid">NFR-ACC-5</span></td><td>DER, 4–6 speakers, including overlap</td><td>≤ 25%</td><td>≤ 35%</td></tr></tbody></table></div>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Requirement</th></tr></thead><tbody><tr><td><span class="rid">NFR-ACC-6</span></td><td>VAD false positives on room tone: ≤ 1 spurious utterance per hour</td></tr><tr><td><span class="rid">NFR-ACC-7</span></td><td>Live mode WER may exceed Balanced mode by no more than 5 percentage points absolute</td></tr><tr><td><span class="rid">NFR-ACC-8</span></td><td>The UI shall not present accuracy as certain: low-confidence utterances are marked, and the documentation states expected accuracy per condition</td></tr></tbody></table></div>
+<blockquote><p><strong>Note on the table condition.</strong> These figures reflect a single near-field microphone at ~1.5 m. This is an accepted consequence of the browser-only capture decision (<a href="#7-decision-record-where-does-the-computation-run">§7</a>). Users who need better results for large meetings can plug a good USB microphone into the <em>client</em> device — the browser will offer it via <code>getUserMedia</code> (FR-CAP-2) — which recovers most of the desk-condition accuracy without any change to the system.</p></blockquote>
+<h3 id="43-resource-limits">4.3 Resource limits</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Requirement</th></tr></thead><tbody><tr><td><span class="rid">NFR-RES-1</span></td><td>Tier B (CPU-only server) shall run Balanced mode within 8 GB RAM</td></tr><tr><td><span class="rid">NFR-RES-2</span></td><td>Server idle CPU (running, no session) shall be &lt; 2% of one core</td></tr><tr><td><span class="rid">NFR-RES-3</span></td><td>Session audio storage shall be ≤ 30 MB per hour at default settings</td></tr><tr><td><span class="rid">NFR-RES-4</span></td><td>Client-to-server bandwidth shall be ≤ 40 kbps per session in Opus mode, ≤ 260 kbps in raw PCM mode</td></tr><tr><td><span class="rid">NFR-RES-5</span></td><td>Client local buffer shall hold ≥ 5 minutes of audio and shall not exceed a configurable cap</td></tr><tr><td><span class="rid">NFR-RES-6</span></td><td>The client bundle shall be ≤ 500 KB gzipped, so the page loads quickly on mobile data</td></tr><tr><td><span class="rid">NFR-RES-7</span></td><td>The server shall refuse to start a session when free disk space is below a configurable threshold, and shall warn in the UI while approaching it. It shall never fail a session part-way by running out of disk</td></tr></tbody></table></div>
+<h3 id="44-security">4.4 Security</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Requirement</th></tr></thead><tbody><tr><td><span class="rid">NFR-SEC-1</span></td><td>The server shall bind to a configurable address, defaulting to loopback. LAN exposure shall be deliberate</td></tr><tr><td><span class="rid">NFR-SEC-2</span></td><td>v1 has no user authentication. Access control is delegated to the network layer (Tailscale). This shall be documented prominently, and the instance must not be exposed to the public internet without a reverse proxy providing authentication</td></tr><tr><td><span class="rid">NFR-SEC-3</span></td><td>The WebSocket ingest endpoint shall require a session token issued by the server, not accept arbitrary connections</td></tr><tr><td><span class="rid">NFR-SEC-4</span></td><td>The WebSocket endpoint shall validate its origin when bound to a non-loopback address</td></tr><tr><td><span class="rid">NFR-SEC-5</span></td><td>Credentials shall be read from environment or a secrets file, never committed and never logged</td></tr><tr><td><span class="rid">NFR-SEC-6</span></td><td>Plugins execute in-process with full server privileges. This is a documented trust boundary: <strong>installing a plugin is equivalent to running arbitrary code on the server</strong></td></tr><tr><td><span class="rid">NFR-SEC-7</span></td><td>Uploaded files and configured paths shall be validated against directory traversal</td></tr><tr><td><span class="rid">NFR-SEC-8</span></td><td>Dependencies shall be pinned with a lockfile and scanned in CI</td></tr><tr><td><span class="rid">NFR-SEC-9</span></td><td>The client shall serve a Content-Security-Policy that forbids inline script and restricts connections to its own origin</td></tr></tbody></table></div>
+<h3 id="45-consent-and-legal">4.5 Consent and legal</h3>
+<blockquote><p><strong>Deferred in v1.2.</strong> Privacy and data-handling <em>features</em> — retention policies, cloud-egress redaction, at-rest encryption, per-person deletion — are out of scope for now and were removed from <a href="#3-functional-requirements">§3</a>. What remains below costs no implementation work: the browser enforces its own microphone indicator, and the rest is a paragraph in the README. Revisit before any release intended for other people to run.</p></blockquote>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Requirement</th></tr></thead><tbody><tr><td><span class="rid">NFR-LEG-1</span></td><td>An unmistakable recording indicator shall be visible whenever capture is active (FR-UI-3). The browser&#x27;s own microphone indicator satisfies most of this for free</td></tr><tr><td><span class="rid">NFR-LEG-2</span></td><td>Documentation shall state plainly that recording law varies by jurisdiction — roughly a dozen US states require all-party consent, Germany criminalises recording confidential speech under §201 StGB, and Serbia, Russia, and the EU each impose their own constraints — and that <strong>the operator, not the software, is responsible for lawful use</strong></td></tr><tr><td><span class="rid">NFR-LEG-3</span></td><td>The project shall not ship any feature designed to conceal that recording is taking place</td></tr></tbody></table></div>
+<h3 id="46-reliability">4.6 Reliability</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Requirement</th></tr></thead><tbody><tr><td><span class="rid">NFR-REL-1</span></td><td>A 4-hour continuous session shall complete without crash, unbounded memory growth, or audio loss</td></tr><tr><td><span class="rid">NFR-REL-2</span></td><td>Loss of internet mid-session shall degrade to local processing rather than failing the session</td></tr><tr><td><span class="rid">NFR-REL-3</span></td><td>Loss of connectivity between client and server shall buffer and resume, not terminate the session (FR-CAP-6)</td></tr><tr><td><span class="rid">NFR-REL-4</span></td><td>Cloud API errors shall be retried with exponential backoff and then fall back to local processing where a local path exists</td></tr><tr><td><span class="rid">NFR-REL-5</span></td><td>Database writes shall be transactional; an abrupt kill shall not corrupt the database</td></tr><tr><td><span class="rid">NFR-REL-6</span></td><td>Model loading failures shall produce an actionable error naming the model, the path searched, and the download command</td></tr><tr><td><span class="rid">NFR-REL-7</span></td><td>All mutable instance state shall live under a single configurable data directory (<a href="#59-storage-layout">§5.9</a>), so that copying that directory with the server stopped constitutes a complete, restorable backup</td></tr></tbody></table></div>
+<h3 id="47-portability-and-installability">4.7 Portability and installability</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Requirement</th></tr></thead><tbody><tr><td><span class="rid">NFR-PORT-1</span></td><td>Installation shall be possible via Docker Compose in a single documented command</td></tr><tr><td><span class="rid">NFR-PORT-2</span></td><td>Installation shall also be possible natively via <code>uv</code> without Docker</td></tr><tr><td><span class="rid">NFR-PORT-3</span></td><td>HTTPS setup shall be documented as a required step, with Tailscale Serve as the primary path and a working command sequence</td></tr><tr><td><span class="rid">NFR-PORT-4</span></td><td>First run shall download required models automatically with progress reported, or fail with the exact command to fetch them</td></tr><tr><td><span class="rid">NFR-PORT-5</span></td><td>The server shall run on Linux x86-64, Linux arm64, and macOS arm64. Windows is best-effort</td></tr><tr><td><span class="rid">NFR-PORT-6</span></td><td>No feature shall require a GPU; GPU shall be detected and used automatically when present</td></tr></tbody></table></div>
+<h3 id="48-maintainability">4.8 Maintainability</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Requirement</th></tr></thead><tbody><tr><td><span class="rid">NFR-MNT-1</span></td><td>ASR, diarization, translation, and LLM shall each sit behind an explicit interface with at least two implementations, proving the abstraction. For the LLM, a cloud endpoint and a local OpenAI-compatible endpoint count as two — they differ in context length, streaming behaviour, and tool-call support, which is what exercises the abstraction</td></tr><tr><td><span class="rid">NFR-MNT-2</span></td><td>The plugin API shall be versioned; breaking changes require a major version bump and a migration note</td></tr><tr><td><span class="rid">NFR-MNT-3</span></td><td>Structured logging with per-component levels shall be configurable at runtime</td></tr><tr><td><span class="rid">NFR-MNT-4</span></td><td>Public interfaces shall carry type annotations and pass a static type check in CI</td></tr><tr><td><span class="rid">NFR-MNT-5</span></td><td>The client shall pass a type check and lint in CI alongside the server</td></tr></tbody></table></div>
+<h3 id="49-evaluation">4.9 Evaluation</h3>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Requirement</th></tr></thead><tbody><tr><td><span class="rid">NFR-EVAL-1</span></td><td>The repository shall include an evaluation harness measuring WER per language and DER per scenario against a labelled corpus</td></tr><tr><td><span class="rid">NFR-EVAL-2</span></td><td>The corpus shall include ≥ 10 minutes of labelled audio per supported language, and <strong>both</strong> a desk-condition and a table-condition multi-speaker recording</td></tr><tr><td><span class="rid">NFR-EVAL-3</span></td><td>The harness shall compare configured backends side by side and emit a comparison table</td></tr><tr><td><span class="rid">NFR-EVAL-4</span></td><td>Model-selection decisions in this document shall be revisited against harness output before v1 release</td></tr><tr><td><span class="rid">NFR-EVAL-5</span></td><td>Corpus recordings shall be captured through the actual browser client, not a studio path, so measurements reflect the real signal chain</td></tr></tbody></table></div>
+<hr />
+<h2 id="5-external-interfaces">5. External interfaces</h2>
+<h3 id="51-user-interface">5.1 User interface</h3>
+<p>Three top-level destinations, flat. Nothing sits more than two levels deep.</p>
+<div class="codewrap"><pre><code>   Record            History              Settings
+      │                 │                    │
+      │                 ▼                    ├─ Capture   device, languages, mode
+      │          Session detail              ├─ Backends  ASR, translation, LLM
+      │                 ├─ Transcript + audio├─ Plugins   enable, configure
+      │                 ├─ Artifacts         └─ Server    storage, disk, health
+      ▼                 └─ Export
+  live transcript,                    md · json · srt
+   updating in place</code></pre></div>
+<p><strong>Record is the landing view.</strong> Opening the app leaves the user one tap from recording, because it is the only time-critical action in the product — a conversation does not wait. History and Settings are places you go deliberately.</p>
+<p>On phones the three destinations are a bottom tab bar, inside thumb reach. On desktop they are a persistent left rail and the transcript takes the remaining width.</p>
+<h4 id="screen-1--record">Screen 1 — Record</h4>
+<p>States: <code>idle</code> → <code>permission</code> → <code>recording</code> → <code>stopping</code> → <code>done</code>, with <code>reconnecting</code> and <code>error</code> as overlays that never replace the transcript.</p>
+<div class="codewrap"><pre><code>┌──────────────────────────────────┐
+│ ● REC  12:04       Live · RU→EN  │  persistent, undismissable (FR-UI-3)
+├──────────────────────────────────┤
+│ ▁▃▅▇▅▃▁              ● connected │  level + link state (FR-UI-10, FR-UI-6)
+├──────────────────────────────────┤
+│                                  │
+│ ▌Speaker 1               11:58   │
+│ ▌Нам нужно закончить это к…      │  original
+│ ▌We need to finish this by…      │  translation, reduced emphasis
+│                                  │
+│ ▌Speaker 2               12:01   │
+│ ▌Da, do petka.                   │
+│ ▌Yes, by Friday.                 │
+│                                  │
+│ ▌· · ·                   12:04   │  speaker unknown until finalised
+│ ▌Хорошо, тогда я▍                │  partial — italic + caret, may rewrite
+│                                  │
+│            ↓ jump to live        │  only while scrolled away
+├──────────────────────────────────┤
+│  RU → EN        Balanced     ⚙   │
+│            ( ■  Stop )           │  thumb reach (FR-UI-5)
+└──────────────────────────────────┘</code></pre></div>
+<p>Behaviour:</p>
+<ul><li><strong>Autoscroll is pinned to the newest utterance</strong> until the user scrolls up, which releases the pin and reveals <em>jump to live</em>. Arriving text must never yank the viewport out from under someone reading back (FR-UI-13).</li><li><strong>Partials are visibly provisional</strong> — italic with a caret — and may rewrite in place. On finalisation they settle to normal weight and never change again (FR-LAT-4, FR-LAT-5). In Balanced mode no partial ever appears, so text arriving later but settled is the expected rhythm.</li><li><strong>A partial carries no speaker.</strong> Diarization needs a completed segment, so Live mode shows an explicit unknown-speaker placeholder that resolves on finalisation (FR-DIA-10). Guessing and then flipping the label would be worse than showing nothing.</li><li><strong>Translation is a second line under its original</strong>, at reduced emphasis, and arrives independently and later (FR-TRA-4). While absent it renders as pending, never as empty or failed (FR-UI-14).</li><li><strong>Speaker colour comes from a fixed, colourblind-safe ordered palette</strong>, assigned on first appearance and stable for that index everywhere in the app. The label is always present — colour is never the sole carrier of identity (FR-UI-16).</li><li><strong>Batch mode shows no transcript at all</strong> while recording (FR-LAT-6), so the view reduces to timer, level meter, and elapsed duration, with copy that sets the expectation that text appears after stopping.</li><li><strong>Reconnecting is non-modal</strong>: a bar reports the state and the buffered backlog draining, while capture continues (FR-CAP-6). Recording must never be interrupted to show a network message.</li></ul>
+<h4 id="screen-2--history">Screen 2 — History</h4>
+<div class="codewrap"><pre><code>┌──────────────────────────────────┐
+│ History                          │
+├──────────────────────────────────┤
+│ [ Search transcripts…          ] │
+│ All time ▾   All langs ▾  Tags ▾ │
+├──────────────────────────────────┤
+│ Standup — infra                  │
+│ Today 09:12 · 18 min · 4 speakers│
+│ RU→EN · summary · 3 action items │
+├──────────────────────────────────┤
+│ Call with Marko                  │
+│ Yesterday 16:40 · 42 min · 2 spk │
+│ SR→EN · summary                  │
+├──────────────────────────────────┤
+│ Voice note                       │
+│ 12 Aug · 3 min · 1 speaker       │
+│ EN · no artifacts                │
+└──────────────────────────────────┘</code></pre></div>
+<p>Each row carries what distinguishes one conversation from another: title, when, how long, how many speakers, language pair, and which artifacts exist. Duration and speaker count do more work than the title here, because auto-generated titles are often weak.</p>
+<p>Searching switches the list to matches rather than sessions — the transcript line, its speaker, its timestamp, and the session it belongs to, with the hit highlighted (FR-SES-10):</p>
+<div class="codewrap"><pre><code>│ Standup — infra            Today │
+│ …finish the ⟦migration⟧ by Friday│
+│ Speaker 2 · 11:58            ▸   │</code></pre></div>
+<p>Selecting a match opens the session <strong>scrolled to that utterance</strong>, not to the top.</p>
+<h4 id="screen-3--session-detail">Screen 3 — Session detail</h4>
+<div class="codewrap"><pre><code>┌──────────────────────────────────┐
+│ ‹ History   Standup — infra   ⋯  │
+├──────────────────────────────────┤
+│ Today 09:12 · 18 min · RU→EN     │
+│ #infra #weekly                ✎  │
+├──────────────────────────────────┤
+│ Transcript │ Summary │ Actions   │
+├──────────────────────────────────┤
+│ ▌Anna                    09:12 ✎ │
+│ ▌Нам нужно закончить это к…      │
+│ ▌We need to finish this by…      │
+│                                  │
+│ ▌Marko                   09:13   │
+│ ▌Da, do petka.                   │
+│ ▌Yes, by Friday.                 │
+├──────────────────────────────────┤
+│ ▶ ──●──────────── 04:12 / 18:04  │
+└──────────────────────────────────┘</code></pre></div>
+<ul><li><strong>Tabs, not scrolling</strong>, separate transcript from artifacts: they answer different questions and one should never bury the other.</li><li><strong>The player follows the transcript and the transcript follows the player.</strong> Tapping an utterance seeks to it; playback highlights the line currently being spoken (FR-UI-8).</li><li><strong>Editing is inline</strong> on any line. A corrected line is marked as edited, and the original stays retrievable (FR-SES-8). After an edit the artifact tabs offer to re-run, since the summary they hold is now stale (FR-SES-9).</li><li><strong>Renaming a speaker is done by tapping the name</strong> on any of their lines, and applies across the whole session at once (FR-DIA-4).</li><li>The overflow menu holds export, delete, and the record of whether anything left the server.</li></ul>
+<h4 id="screen-4--settings">Screen 4 — Settings</h4>
+<p>Grouped by what the operator is actually deciding: <strong>Capture</strong> (default device, language list, target language, default latency mode, browser audio processing), <strong>Backends</strong> (ASR, translation, LLM, with the active model and reachability shown), <strong>Plugins</strong> (enable, configure — forms rendered from each plugin&#x27;s declared schema, FR-PLG-5), and <strong>Server</strong> (storage location and usage, disk headroom, model status, health).</p>
+<p>Settings that cannot take effect until the next session say so rather than appearing to apply immediately.</p>
+<h4 id="cross-cutting">Cross-cutting</h4>
+<div class="tablewrap"><table><thead><tr><th>Concern</th><th>Rule</th></tr></thead><tbody><tr><td><strong>Empty states</strong></td><td>Every list defines one. No history reads as an invitation to record, not an error. No search results names the query and offers to clear the filters (FR-UI-15)</td></tr><tr><td><strong>Errors</strong></td><td>Non-blocking, they name the component, and they say what to do — &quot;microphone permission was denied; enable it in site settings and press Record again&quot;, never &quot;an error occurred&quot; (FR-UI-9)</td></tr><tr><td><strong>Destructive actions</strong></td><td>Deleting a session requires confirmation naming the session&#x27;s title, because nothing is recoverable afterwards (FR-SES-12)</td></tr><tr><td><strong>Responsive</strong></td><td>One column below 640 px, transcript plus rail above. All primary actions reachable at 375 px with no horizontal scroll (FR-UI-4)</td></tr><tr><td><strong>Long sessions</strong></td><td>The transcript is virtualised; a 2000-utterance session scrolls without blocking interaction (NFR-PERF-8)</td></tr><tr><td><strong>Accessibility</strong></td><td>Speaker identity carried by label as well as colour; visible focus states throughout; WCAG AA contrast in both themes (FR-UI-11)</td></tr><tr><td><strong>Theming</strong></td><td>Light and dark both designed, following the device preference with a manual override</td></tr></tbody></table></div>
+<h3 id="52-http-api-sketch">5.2 HTTP API (sketch)</h3>
+<div class="codewrap"><pre><code>GET    /api/health                      → version, active backends, model status, GPU presence
+GET    /api/config                      → effective configuration (secrets redacted)
+PATCH  /api/config                      → update mutable configuration
+
+POST   /api/sessions                    → create a session {languages, target_language, mode, vocabulary[]}
+                                          returns {session_id, ingest_token, ws_url}
+GET    /api/sessions                    → list with pagination, filters (date, tag, language)
+GET    /api/sessions/{id}               → session detail with utterances
+PATCH  /api/sessions/{id}               → update metadata (title, tags, participants)
+POST   /api/sessions/{id}/stop          → finalise the session
+PATCH  /api/sessions/{id}/mode          → change latency mode mid-session
+DELETE /api/sessions/{id}               → purge session and all associated data
+
+PATCH  /api/utterances/{id}             → edit transcript text
+GET    /api/sessions/{id}/audio         → audio stream, supports HTTP range requests
+
+GET    /api/sessions/{id}/speakers      → speaker labels
+PATCH  /api/speakers/{id}               → rename a speaker
+
+GET    /api/sessions/{id}/artifacts     → plugin outputs, all versions
+POST   /api/sessions/{id}/plugins/{name}/run → re-run a plugin
+
+GET    /api/plugins                     → installed plugins, status, config schema
+PATCH  /api/plugins/{name}              → enable/disable, update config
+
+GET    /api/search?q=...&amp;mode=fts|semantic → cross-session search
+GET    /api/sessions/{id}/export?format=md|json|srt|vtt
+
+WS     /ws/ingest?token=...             → client → server audio upload
+WS     /ws/sessions/{id}                → server → client live event stream</code></pre></div>
+<h3 id="53-audio-ingest-protocol">5.3 Audio ingest protocol</h3>
+<p>The client opens <code>/ws/ingest</code> with the token issued at session creation, then alternates a JSON control frame and a binary payload frame:</p>
+<div class="codewrap"><pre><code class="lang-jsonc">// Control frame — precedes each audio chunk
+{ &quot;seq&quot;: 412, &quot;t_ms&quot;: 8240, &quot;codec&quot;: &quot;pcm_s16le_16k&quot;, &quot;samples&quot;: 3200 }</code></pre></div>
+<p>followed by the binary chunk. Chunks are 200 ms by default.</p>
+<p><strong>Server → client acknowledgements</strong> carry the highest contiguous sequence received:</p>
+<div class="codewrap"><pre><code class="lang-jsonc">{ &quot;type&quot;: &quot;ack&quot;, &quot;through_seq&quot;: 412, &quot;buffered_ms&quot;: 0 }</code></pre></div>
+<p>The client retains unacknowledged chunks in memory, spilling to IndexedDB beyond a threshold, and retransmits from the first gap on reconnection. This is what makes FR-CAP-6 and NFR-REL-3 achievable.</p>
+<h3 id="54-live-event-stream">5.4 Live event stream</h3>
+<div class="codewrap"><pre><code class="lang-jsonc">{
+  &quot;type&quot;: &quot;utterance.final&quot;,
+  &quot;session_id&quot;: &quot;sess_01J...&quot;,
+  &quot;seq&quot;: 142,                    // monotonic per session; clients detect gaps and refetch
+  &quot;ts&quot;: &quot;2026-08-14T11:32:07.412Z&quot;,
+  &quot;data&quot;: {
+    &quot;utterance_id&quot;: &quot;utt_01J...&quot;,
+    &quot;start_ms&quot;: 184320,
+    &quot;end_ms&quot;: 187940,
+    &quot;speaker_id&quot;: &quot;spk_02&quot;,
+    &quot;language&quot;: &quot;ru&quot;,
+    &quot;text&quot;: &quot;Нам нужно закончить это к пятнице.&quot;,
+    &quot;translation&quot;: &quot;We need to finish this by Friday.&quot;,
+    &quot;confidence&quot;: 0.94,
+    &quot;words&quot;: [{ &quot;w&quot;: &quot;Нам&quot;, &quot;start_ms&quot;: 184320, &quot;end_ms&quot;: 184580 }]
+  }
+}</code></pre></div>
+<p><strong>Event types:</strong> <code>session.start</code>, <code>session.end</code>, <code>session.mode_changed</code>, <code>utterance.partial</code>, <code>utterance.final</code>, <code>speaker.changed</code>, <code>translation.final</code>, <code>transcript.edited</code>, <code>artifact.created</code>, <code>capture.error</code>, <code>plugin.error</code>.</p>
+<p>Viewers reconnect by supplying the last <code>seq</code> they received; the server replays from there or instructs a full refetch. Recording and viewing are separate connections, so a phone can record while a laptop watches (FR-SES-5).</p>
+<h3 id="55-plugin-api-contract">5.5 Plugin API contract</h3>
+<div class="codewrap"><pre><code class="lang-python">from droid_assistant.plugin import Plugin, Context, Event, Artifact
+from pydantic import BaseModel
+
+class SummaryConfig(BaseModel):
+    style: str = &quot;bullets&quot;          # rendered as a form field automatically
+    max_words: int = 400
+    include_decisions: bool = True
+
+class SummaryPlugin(Plugin):
+    name = &quot;summary&quot;
+    version = &quot;1.0.0&quot;
+    api_version = 1                 # host refuses to load a mismatched major version
+    config_schema = SummaryConfig
+    subscribes = {Event.SESSION_END}
+
+    async def on_session_end(self, ctx: Context) -&gt; Artifact | None:
+        transcript = await ctx.store.transcript(ctx.session_id, include_speakers=True)
+        text = await ctx.llm.complete(
+            system=&quot;You summarise meeting transcripts.&quot;,
+            prompt=f&quot;Summarise in at most {ctx.config.max_words} words:\n\n{transcript}&quot;,
+        )
+        return Artifact(kind=&quot;summary&quot;, mime=&quot;text/markdown&quot;, content=text)</code></pre></div>
+<div class="tablewrap"><table><thead><tr><th>Member</th><th>Contract</th></tr></thead><tbody><tr><td><code>ctx.store</code></td><td>Read-only access to the session, its utterances, and speakers</td></tr><tr><td><code>ctx.llm</code></td><td>Pre-configured client. Respects global budget and local-only settings. Plugins never handle credentials</td></tr><tr><td><code>ctx.config</code></td><td>Validated instance of the plugin&#x27;s own <code>config_schema</code></td></tr><tr><td><code>ctx.emit_artifact(...)</code></td><td>Emit an artifact at any point, not only from <code>on_session_end</code></td></tr><tr><td><code>ctx.logger</code></td><td>Namespaced logger</td></tr></tbody></table></div>
+<p><strong>Host guarantees:</strong> every handler runs in a supervised task with a timeout, off the live transcript path (FR-PLG-9); exceptions are caught, logged, and disable that plugin for the session only. <strong>Non-guarantee:</strong> plugins run in-process with full server privileges (NFR-SEC-6).</p>
+<h3 id="56-backend-interfaces">5.6 Backend interfaces</h3>
+<div class="codewrap"><pre><code class="lang-python">class ASRBackend(Protocol):
+    async def start_stream(self, config: StreamConfig) -&gt; ASRStream: ...
+    async def transcribe(self, audio: AudioBuffer, config: StreamConfig) -&gt; list[Utterance]: ...
+    @property
+    def capabilities(self) -&gt; ASRCapabilities: ...   # streaming?, languages, word timestamps?
+
+class DiarizationBackend(Protocol):
+    async def diarize(self, audio: AudioBuffer) -&gt; list[SpeakerSegment]: ...
+    async def embed(self, audio: AudioBuffer) -&gt; Embedding: ...
+
+class TranslationBackend(Protocol):
+    async def translate(self, text: str, src: str, dst: str, context: list[str]) -&gt; str: ...</code></pre></div>
+<p><code>capabilities</code> is what lets the server refuse an impossible configuration at startup rather than failing mid-session — for example, selecting Live mode with a non-streaming backend.</p>
+<h3 id="57-audio-transport">5.7 Audio transport</h3>
+<div class="tablewrap"><table><thead><tr><th>Mode</th><th>Encoding</th><th>Bandwidth</th><th>When</th></tr></thead><tbody><tr><td><strong>Raw</strong> (default)</td><td>16 kHz mono <code>s16le</code>, 200 ms chunks</td><td>~256 kbps</td><td>LAN and Tailscale on wifi. Lowest latency, no client-side encoding cost, trivial server handling</td></tr><tr><td><strong>Compressed</strong></td><td>Opus via <code>MediaRecorder</code> (<code>audio/webm;codecs=opus</code>) at 24–32 kbps</td><td>~28 kbps</td><td>Mobile data, or a slow link. Server demuxes the WebM container. Adds ~100–200 ms latency</td></tr></tbody></table></div>
+<p>The client selects a mode automatically from the Network Information API where available, and the user can override it (FR-CAP-12).</p>
+<h3 id="58-data-model">5.8 Data model</h3>
+<div class="codewrap"><pre><code>sessions      (id, title, started_at, ended_at, mode, source_languages, target_language,
+               client_user_agent, mic_label, audio_constraints, cloud_used, providers_used,
+               audio_path, tags, participants, metadata)
+
+utterances    (id, session_id, seq, start_ms, end_ms, speaker_id, language, text,
+               text_original, translation, confidence, words_json, edited_at, embedding)
+
+speakers      (id, session_id, label, display_name, person_id, centroid_embedding)
+
+persons       (id, name, created_at)                                      -- v2
+voiceprints   (id, person_id, embedding, source_session_id, created_at)   -- v2
+
+artifacts     (id, session_id, plugin_name, plugin_version, kind, mime,
+               content, version, created_at, superseded_by)
+
+plugin_state  (plugin_name, enabled, config_json, last_error, last_error_at)
+
+ingest_tokens (token, session_id, issued_at, expires_at, revoked_at)
+
+events_log    (id, session_id, type, payload_json, created_at)            -- diagnostics, prunable</code></pre></div>
+<p>Indexes: <code>utterances(session_id, seq)</code>, FTS5 virtual tables over <code>utterances(text, translation)</code> <strong>and</strong> <code>artifacts(content)</code> (FR-SES-10), vector index over <code>utterances(embedding)</code>.</p>
+<p>All absolute timestamps are stored as UTC and rendered in the viewer&#x27;s local timezone. Utterance offsets (<code>start_ms</code>, <code>end_ms</code>) are relative to session start and are timezone-free.</p>
+<h3 id="59-storage-layout">5.9 Storage layout</h3>
+<p>All mutable state lives under one directory, so that backing up the instance is copying a folder.</p>
+<div class="codewrap"><pre><code>$DROID_DATA/                      # default ./data — override with DROID_DATA_DIR
+├── droid.db                      # SQLite: sessions, utterances, speakers, artifacts, FTS index
+├── droid.db-wal                  # write-ahead log — must be copied together with droid.db
+├── droid.db-shm
+├── audio/
+│   └── 2026/08/14/
+│       └── sess_01J8XK7Q.opus    # one file per session; the path is recorded in sessions.audio_path
+├── models/                       # downloaded ASR / VAD / diarization weights — regenerable, skip in backups
+└── config.toml                   # operator configuration</code></pre></div>
+<p><strong>Backup</strong> is <code>cp -r $DROID_DATA</code> with the server stopped, excluding <code>models/</code>. Restoring that directory onto a clean install reproduces every session, transcript, and artifact (NFR-REL-7).</p>
+<p><strong>Growth is unbounded.</strong> Retention and auto-purge were removed in v1.2, so nothing is ever deleted except by hand (FR-SES-12). At the <a href="#43-resource-limits">NFR-RES-3</a> budget of ~30 MB per hour of audio, one hour of recording per day is roughly 11 GB per year; transcripts themselves are negligible beside that. NFR-RES-7 guards against filling the disk, but the operator owns the cleanup policy.</p>
+<hr />
+<h2 id="6-architecture-and-technology">6. Architecture and technology</h2>
+<h3 id="61-component-diagram">6.1 Component diagram</h3>
+<div class="codewrap"><pre><code>  ┌──────────────────── Browser client (phone or desktop) ────────────────────┐
+  │                                                                           │
+  │  getUserMedia ─► AudioWorklet ─► resample 16 kHz ─► chunk ─► WebSocket ──┐ │
+  │       │                                                 ▲               │ │
+  │  Wake Lock                                     IndexedDB buffer         │ │
+  │                                                (retransmit on reconnect)│ │
+  │                                                                          │ │
+  │  Live transcript ◄──────────────── WebSocket ◄───────────────────────────┼─┼──┐
+  └───────────────────────────────────────────────────────────────────────────┘ │  │
+                                                                                 │  │
+  ═══════════════════════════ HTTPS / Tailscale ══════════════════════════════════│══│═══
+                                                                                 ▼  │
+  ┌───────────────────────────── Server (your machine) ──────────────────────────┐  │
+  │                                                                              │  │
+  │  Ingest ─► Ring buffer ─► VAD ─────────────────────────┐                     │  │
+  │                                                        ▼                     │  │
+  │                      ┌─────────────────────────────────────────────┐         │  │
+  │                      │  Pipeline — parameterised by latency mode   │         │  │
+  │                      │    Live     : sliding window + partials     │         │  │
+  │                      │    Balanced : commit on VAD endpoint        │         │  │
+  │                      │    Batch    : buffer whole session          │         │  │
+  │                      │    ASR ─► Diarize ─► Translate              │         │  │
+  │                      └──────────────────┬──────────────────────────┘         │  │
+  │                                         ▼                                    │  │
+  │                                   ┌───────────┐                              │  │
+  │                                   │ Event bus │──────────────────────────────┼──┘
+  │                                   └─────┬─────┘                              │
+  │                          ┌──────────────┴──────────────┐                     │
+  │                    ┌─────▼──────┐              ┌────────▼────────┐            │
+  │                    │  SQLite    │              │  Plugin host    │            │
+  │                    │  + audio   │              │  (off the live  │            │
+  │                    └────────────┘              │   path)         │            │
+  │                                                └────────┬────────┘            │
+  └─────────────────────────────────────────────────────────┼─────────────────────┘
+                                                            ▼
+                                                     LLM API (cloud)</code></pre></div>
+<h3 id="62-technology-choices-and-rejected-alternatives">6.2 Technology choices and rejected alternatives</h3>
+<div class="tablewrap"><table><thead><tr><th>Layer</th><th>Choice</th><th>Why</th><th>Rejected</th></tr></thead><tbody><tr><td>Client</td><td>React 19 + Vite + TypeScript + Tailwind, built to static assets served by the API</td><td>One deployable, no separate Node runtime; matches the maintainer&#x27;s stack</td><td><strong>Svelte</strong> — smaller, smaller ecosystem. <strong>Server-rendered templates</strong> — poor fit for live-updating transcript</td></tr><tr><td>Client audio</td><td><code>getUserMedia</code> + <code>AudioWorklet</code> + manual resample</td><td>Worklet runs off the main thread, giving stable capture while the UI renders. Full control over chunk size and latency</td><td><strong><code>ScriptProcessorNode</code></strong> — deprecated, main-thread, causes glitches. <strong><code>MediaRecorder</code> alone</strong> — coarse chunking, container overhead, less latency control (retained as the compressed transport mode)</td></tr><tr><td>Screen keep-alive</td><td>Screen Wake Lock API</td><td>The single most important mitigation for browser-only capture. Without it, phone recording stops at screen lock</td><td><strong>Playing silent audio</strong> — a common hack; unreliable and burns battery</td></tr><tr><td>Client buffering</td><td>In-memory ring, spilling to IndexedDB</td><td>Makes reconnection lossless, which is what makes a browser client trustworthy for a 60-minute meeting</td><td><strong>No buffering</strong> — any network blip silently loses audio</td></tr><tr><td>Transport</td><td>WebSocket, raw PCM by default, Opus for metered links</td><td>Simplest thing that meets the latency budget; compression only where it&#x27;s needed</td><td><strong>WebRTC</strong> — designed for this, but a SFU/ICE stack is heavy for a single-hop self-hosted app. <strong>HTTP chunked upload</strong> — no back-pressure or acknowledgement path</td></tr><tr><td>Backend runtime</td><td>Python 3.12, FastAPI, uvicorn, <code>uv</code></td><td>The entire speech-ML ecosystem is Python; matches the maintainer&#x27;s stack</td><td><strong>Node/TypeScript</strong> — would shell out to Python for every model. <strong>Go/Rust</strong> — great for the audio path, thin ML ecosystem</td></tr><tr><td>VAD</td><td>Silero VAD (ONNX, MIT)</td><td>~1 MB, sub-millisecond per frame, no PyTorch, strong in noise</td><td><strong>WebRTC VAD</strong> — much weaker in noise. <strong>Client-side VAD</strong> — would save bandwidth but makes server-side re-segmentation impossible; revisit only if bandwidth becomes the binding constraint</td></tr><tr><td>ASR (local)</td><td><code>faster-whisper</code> (CTranslate2, MIT) — <code>large-v3-turbo</code> on Tier A, <code>medium</code>/<code>small</code> int8 on Tier B</td><td>Best multilingual coverage including Russian and Serbian; 4–8× faster than reference Whisper at equal quality</td><td><strong>Parakeet-TDT-v3</strong> — faster and excellent for its 25 European languages, but Serbian is very likely absent (<a href="#10-risks-and-open-questions">R1</a>). <strong><code>whisper.cpp</code></strong> — retained as an Apple Silicon alternative backend</td></tr><tr><td>ASR (streaming)</td><td>LocalAgreement-2 sliding window over <code>faster-whisper</code></td><td>Whisper is <strong>not</strong> a streaming model. This policy emits stable prefixes from overlapping windows and is what makes Live mode possible for Russian and Serbian at all</td><td><strong>Streaming Zipformer (sherpa-onnx)</strong> — genuinely streaming and fast, but no Serbian. <strong>Cloud streaming</strong> — retained as the high-quality Live-mode option</td></tr><tr><td>ASR (cloud)</td><td>Pluggable: Deepgram, Speechmatics, Google STT</td><td>Native streaming, strong Russian coverage, and the practical answer if local Serbian quality fails R1</td><td><strong>OpenAI Whisper API</strong> — batch only, no streaming</td></tr><tr><td>Diarization</td><td><code>sherpa-onnx</code> offline diarization (Apache-2.0)</td><td>No PyTorch, permissive license, no gated model downloads — real installation friction matters for an OSS project</td><td><strong><code>pyannote.audio</code> 3.1</strong> — higher accuracy but requires a Hugging Face token and gated-model acceptance. Retained as an <strong>opt-in</strong> backend</td></tr><tr><td>Translation</td><td>LLM per utterance with rolling context, streamed per utterance</td><td>Sentence-isolated MT destroys pronoun reference, gender agreement, and register — which matter badly for RU and SR</td><td><strong>Per-sentence NMT</strong> — cheaper, noticeably worse in conversation. <strong>Whisper&#x27;s <code>translate</code> task</strong> — English-target only, degrades transcription</td></tr><tr><td>Translation (local)</td><td>Helsinki-NLP Opus-MT or MADLAD-400 via CTranslate2</td><td>Permissive licensing suitable as an OSS default</td><td><strong>NLLB-200</strong> — better quality but <strong>CC-BY-NC</strong>, so opt-in only (C-6)</td></tr><tr><td>LLM</td><td>OpenAI API via the <code>openai</code> SDK, streaming, model set by configuration</td><td>Chosen for its API <em>shape</em> as much as its models: Azure OpenAI, OpenRouter, Ollama, vLLM, LM Studio, and llama.cpp all expose OpenAI-compatible endpoints, so one client serves a cloud frontier model and a fully local one by changing a base URL. That is what makes C-3 (works with no internet) nearly free</td><td><strong>Provider-locked design</strong> — rejected; the LLM sits behind an interface (NFR-MNT-1). <strong>A bespoke multi-provider abstraction</strong> — unnecessary, since the OpenAI request shape is already the de-facto interop standard</td></tr><tr><td>Storage</td><td>SQLite (WAL) + FTS5 + <code>sqlite-vec</code>; audio as Opus on disk</td><td>One file, zero operational burden, ideal for local-first distribution</td><td><strong>Postgres + pgvector</strong> — better for multi-user, unjustified for v1. Documented as the migration path</td></tr><tr><td>Access control</td><td>Tailscale, with the app trusting the network</td><td>Delegates identity to a tool that does it properly, and simultaneously solves HTTPS. Building auth into v1 would be worse auth</td><td><strong>Built-in accounts</strong> — deferred to v3. <strong>Public exposure with a password</strong> — rejected as a documented default</td></tr><tr><td>Packaging</td><td>Docker Compose (CPU and CUDA) + native <code>uv</code> install + systemd unit</td><td>Others must be able to run this</td><td>Source-only distribution — hostile to adoption</td></tr></tbody></table></div>
+<h3 id="63-server-hardware-tiers">6.3 Server hardware tiers</h3>
+<p><strong>The server is a small always-on machine.</strong> This is an architectural decision, not a preference: a laptop that sleeps drops the session you were about to record, which was the single largest day-to-day failure in earlier drafts (formerly R12). Everything below assumes a dedicated box that boots on power and starts the service automatically (<a href="#85-running-it-always-on">§8.5</a>).</p>
+<p>The tiers differ in one thing that matters — <strong>how much of the pipeline can run locally</strong>:</p>
+<div class="tablewrap"><table><thead><tr><th>Tier</th><th>Hardware</th><th>≈ Price</th><th>Power</th><th>Local ASR ceiling</th><th>Modes without cloud</th></tr></thead><tbody><tr><td><strong>A</strong></td><td>Apple Silicon Mac, or x86-64 + NVIDIA GPU ≥ 6 GB</td><td>$500+</td><td>10–40 W</td><td><code>large-v3-turbo</code> at realtime</td><td>All three</td></tr><tr><td><strong>B — recommended</strong></td><td>Intel N100/N150-class mini PC, 16 GB</td><td>~$170</td><td>10–15 W</td><td><code>small</code>/<code>medium</code> int8 near realtime</td><td>Balanced, Batch</td></tr><tr><td><strong>C</strong></td><td>Raspberry Pi 5, 8–16 GB</td><td>~$100</td><td>5–8 W</td><td><code>small</code> int8, around or below realtime</td><td>Batch, slowly</td></tr><tr><td><strong>D</strong></td><td>Raspberry Pi 4, 4–8 GB</td><td>~$60</td><td>4–6 W</td><td><code>tiny</code>/<code>base</code> only, below realtime</td><td><strong>None — cloud ASR required</strong></td></tr></tbody></table></div>
+<p><strong>Tier B is the recommendation.</strong> It is the cheapest tier at which the accuracy targets in <a href="#42-accuracy">§4.2</a> are reachable without sending audio off the box, which is what &quot;hybrid, local-first&quot; was chosen for in the first place.</p>
+<p><strong>On Tier D specifically:</strong> a Raspberry Pi 4 is an excellent always-on host and a poor inference host. It handles ingest, storage, orchestration, the web app, and plugin dispatch comfortably — but <code>tiny</code> and <code>base</code> are the only Whisper models that will run, and their Russian accuracy is weak and Serbian unusable. A Pi 4 therefore implies <strong>cloud ASR</strong>, which means per-minute cost and audio leaving the network. That is a legitimate configuration and the spec supports it fully; it is simply a different trade than the one C-3 and C-4 were written for. Tier C (Pi 5) narrows the gap but does not close it.</p>
+<p>Exact figures per tier are the evaluation harness&#x27;s job (<a href="#49-evaluation">§4.9</a>); the ranking above is stable, the absolute numbers are not yet measured.</p>
+<h3 id="64-why-the-browser-client-is-enough">6.4 Why the browser client is enough</h3>
+<p>The three things a native app would buy — background recording, better microphones, on-device ML — are addressed or accepted:</p>
+<div class="tablewrap"><table><thead><tr><th>Native advantage</th><th>Status</th></tr></thead><tbody><tr><td>Recording with the screen off</td><td><strong>Mitigated</strong> by Screen Wake Lock (FR-CAP-7), which keeps the screen on and the tab alive at a battery cost</td></tr><tr><td>Surviving app switching</td><td><strong>Accepted limitation.</strong> Documented; the recording tab must stay foregrounded, most strictly on iOS</td></tr><tr><td>Better microphone access</td><td><strong>Not actually an advantage</strong> — <code>getUserMedia</code> offers any USB microphone plugged into the client device (FR-CAP-2)</td></tr><tr><td>On-device ASR</td><td><strong>Not viable</strong> for this project&#x27;s languages (<a href="#7-decision-record-where-does-the-computation-run">§7</a>)</td></tr><tr><td>Reliable networking</td><td><strong>Mitigated</strong> by client-side buffering and retransmission (FR-CAP-6)</td></tr></tbody></table></div>
+<hr />
+<h2 id="7-decision-record-where-does-the-computation-run">7. Decision record: where does the computation run?</h2>
+<p><strong>Status:</strong> Accepted <strong>Date:</strong> 2026-08-14 <strong>Supersedes:</strong> the v1.0 &quot;Raspberry Pi vs. Android&quot; record</p>
+<h3 id="context">Context</h3>
+<p>The product should let a user open an Android app <em>or</em> a web page, press record, and see results. That raised the deciding question: <strong>can a phone run good-quality, live speech recognition locally?</strong> If yes, the app could be self-contained. If no, a server is mandatory and the client is thin.</p>
+<h3 id="investigation">Investigation</h3>
+<div class="tablewrap"><table><thead><tr><th>Option</th><th>Live?</th><th>EN</th><th>RU</th><th>SR</th><th>Diarization</th></tr></thead><tbody><tr><td>Android <code>SpeechRecognizer</code>, on-device (API 33+)</td><td>Yes, streaming</td><td>Good</td><td>Fair–good where a pack exists</td><td><strong>None</strong></td><td><strong>No</strong></td></tr><tr><td><code>whisper.cpp</code> on-device</td><td>Only at <code>tiny</code>/<code>base</code></td><td>Poor at that size</td><td>Bad</td><td>Unusable</td><td>No</td></tr><tr><td><code>sherpa-onnx</code> streaming Zipformer</td><td>Yes, ~300 ms</td><td>Strong</td><td>Thin model availability</td><td><strong>Effectively none</strong></td><td>Offline only, costly on phone</td></tr><tr><td>Vosk</td><td>Yes</td><td>OK</td><td>OK</td><td>No</td><td>No</td></tr><tr><td>Cloud streaming from the phone</td><td>Yes</td><td>Excellent</td><td>Excellent</td><td>Good</td><td>Provider-dependent</td></tr></tbody></table></div>
+<p>Three findings are decisive:</p>
+<ol><li><strong>Serbian has no viable on-device model.</strong> Not in Google&#x27;s on-device packs, not in streaming Zipformer, not in Vosk. This alone settles it.</li><li><strong>No phone API performs live diarization.</strong> The &quot;recognise different people&quot; requirement has no on-device answer at all.</li><li><strong>There is no portable NPU path.</strong> NNAPI is deprecated as of Android 15, and its replacements are per-vendor SDKs — untenable for an open-source project.</li></ol>
+<p>Secondary but real: Whisper is not a streaming model, so live use needs a sliding window costing 2–3× compute, which caps a phone at <code>tiny</code>/<code>base</code>; and sustained multi-core inference throttles a phone within roughly 10–15 minutes.</p>
+<h3 id="decision">Decision</h3>
+<p><strong>The phone is a microphone and a screen. The server is the brain. The client is a web page, and there will be no native application.</strong></p>
+<ul><li>Capture, buffering, and display happen in the browser via <code>getUserMedia</code>, <code>AudioWorklet</code>, IndexedDB, and Wake Lock.</li><li>Recognition, diarization, translation, storage, and plugins happen on a server the operator runs — their own machine, reached over Tailscale.</li><li>The <code>ASRBackend</code> abstraction keeps a future on-device English-only fast path possible without restructuring anything, but it is not planned.</li></ul>
+<h3 id="consequences">Consequences</h3>
+<p><strong>Accepted</strong></p>
+<ul><li>HTTPS becomes a <strong>v1 requirement</strong>, not a later nicety, because browser capture needs a secure context. Tailscale Serve makes this about ten minutes of setup.</li><li>Recording requires a foregrounded tab with the screen awake. This is the real cost of the decision, and it is worst on iOS.</li><li>A phone microphone at 1.5 m is a worse signal than a dedicated array, so <a href="#42-accuracy">§4.2</a> carries separate, lower targets for the table condition.</li><li>The server must be awake when recording. An always-on machine is recommended, not required.</li></ul>
+<p><strong>Gained</strong></p>
+<ul><li>One codebase, one language pair, no app store, no Kotlin.</li><li>The client works on every device the user already owns, including desktops, on day one.</li><li>Plugging a good USB microphone into the <em>client</em> recovers most of the accuracy loss with no code change.</li><li>Model upgrades ship server-side, instantly, with no client update.</li></ul>
+<h3 id="if-this-is-ever-revisited">If this is ever revisited</h3>
+<p>The trigger would be a genuinely streaming multilingual on-device model covering Serbian, plus an on-device diarizer. Neither exists today. Should both appear, the <code>ASRBackend</code> interface is where they would attach.</p>
+<hr />
+<h2 id="8-deployment">8. Deployment</h2>
+<h3 id="81-install">8.1 Install</h3>
+<div class="codewrap"><pre><code class="lang-bash">git clone https://github.com/&lt;owner&gt;/droid-assistant
+cd droid-assistant
+cp .env.example .env          # set OPENAI_API_KEY if using cloud features
+docker compose up -d          # or: docker compose -f compose.cuda.yml up -d</code></pre></div>
+<p>All state lives in the data directory (<a href="#59-storage-layout">§5.9</a>), which the compose file mounts as a named volume. <code>docker compose down -v</code> deletes that volume and every recorded session with it — use plain <code>down</code> unless you mean it.</p>
+<p>Native alternative:</p>
+<div class="codewrap"><pre><code class="lang-bash">uv sync
+uv run droid-assistant models download
+uv run droid-assistant serve</code></pre></div>
+<h3 id="82-https-is-mandatory">8.2 HTTPS is mandatory</h3>
+<p>Browsers refuse microphone access outside a secure context. <code>http://localhost</code> qualifies — so a browser on the server machine works immediately — but any other device needs real HTTPS.</p>
+<p><strong>Primary path — Tailscale Serve:</strong></p>
+<div class="codewrap"><pre><code class="lang-bash">tailscale up
+tailscale serve --bg 8000
+# → https://&lt;machine&gt;.&lt;tailnet&gt;.ts.net</code></pre></div>
+<p>This issues a genuine certificate, needs no port forwarding, and works from outside the LAN. It also provides the access control that v1 deliberately does not implement (NFR-SEC-2).</p>
+<p><strong>Alternatives</strong>, documented but not recommended as defaults:</p>
+<div class="tablewrap"><table><thead><tr><th>Option</th><th>Trade-off</th></tr></thead><tbody><tr><td>Caddy with a DNS-01 certificate for a domain pointing at the LAN IP</td><td>Needs a domain; certificate valid 90 days fully offline once issued</td></tr><tr><td><code>chrome://flags/#unsafely-treat-insecure-origin-as-secure</code></td><td>Per-device manual allowlist; adequate for one personal device, unsuitable as documented default</td></tr><tr><td><code>mkcert</code> with an installed root CA</td><td>Per-device CA installation; more friction than Tailscale</td></tr></tbody></table></div>
+<h3 id="83-first-run-checklist">8.3 First-run checklist</h3>
+<p>Documentation shall walk through: starting the server, reaching it over HTTPS, granting microphone permission, selecting a device, running a 30-second test recording, and confirming the transcript. A <code>droid-assistant doctor</code> command shall verify model presence, GPU detection, disk space, and HTTPS reachability.</p>
+<h3 id="84-recording-well">8.4 Recording well</h3>
+<p>Guidance shipped in the documentation, since it affects results more than any setting:</p>
+<ul><li>Place the phone as close to the speakers as practical; 1.5 m is much worse than 0.5 m</li><li>Prefer a laptop with a USB microphone for meetings that matter</li><li>Keep the screen on, or confirm Wake Lock is active</li><li>Disable browser noise suppression for multi-speaker recordings — it is tuned for a single near voice and can suppress quieter participants</li><li>Record a 30-second test before a session that cannot be repeated</li></ul>
+<h3 id="85-running-it-always-on">8.5 Running it always-on</h3>
+<p>The server is expected to be a dedicated machine that is simply always up (<a href="#63-server-hardware-tiers">§6.3</a>). Three properties make that true, and the documentation shall verify each during install:</p>
+<ol><li><strong>Starts on power.</strong> The service runs under systemd with <code>Restart=always</code> and <code>WantedBy=multi-user.target</code>, so a power cut is a reboot rather than an outage. On a mini PC, enable <em>restore on AC loss</em> in the BIOS.</li><li><strong>Reachable without intervention.</strong> <code>tailscale up</code> persists across reboots; <code>tailscale serve</code> is re-applied by the unit file. The hostname never changes, so client bookmarks keep working.</li><li><strong>Reports its own health.</strong> <code>GET /api/health</code> returns model status, disk headroom, and backend reachability. <code>droid-assistant doctor</code> checks the same from the shell.</li></ol>
+<p><strong>Undervolting, throttling, and storage.</strong> A Pi-class board should run from a good power supply and, on Tier C or D, benefit from a heatsink or fan — thermal throttling during a long Batch job is otherwise silent and slow. <strong>Do not keep the database and audio on the boot SD card</strong>: attach USB SSD storage and point <code>DROID_DATA_DIR</code> at it. SD cards fail under sustained write, and they take your entire history with them (<a href="#59-storage-layout">§5.9</a>).</p>
+<p><strong>Backups run themselves or not at all.</strong> A nightly <code>cp -r</code> of <code>$DROID_DATA</code> — excluding <code>models/</code> — to a second disk or another machine is the whole procedure (NFR-REL-7). Schedule it; a backup you have to remember is not a backup.</p>
+<hr />
+<h2 id="9-roadmap">9. Roadmap</h2>
+<h3 id="v1--working-system">v1 — Working system</h3>
+<p>Browser capture with Wake Lock and resumable buffering · WebSocket ingest · VAD · local and cloud ASR · anonymous diarization with embeddings stored · streamed LLM translation with rolling context · three latency modes with mid-session switching · SQLite persistence · session history and browsing · full-text search over transcripts and artifacts · session presets · pause/resume · transcript editing · plugin system with summary and action-item reference plugins · live transcript UI with multi-viewer support · audio playback · Markdown/JSON/SRT export · Tailscale HTTPS documentation · Docker and native install · evaluation harness covering both microphone conditions.</p>
+<h3 id="v2--depth">v2 — Depth</h3>
+<p>Voice enrollment and named speakers, applied retroactively · semantic search · per-speaker target languages · file import · webhook plugin transport · artifact push destinations · per-utterance confidence in the UI.</p>
+<h3 id="v3--breadth">v3 — Breadth</h3>
+<p>Optional built-in authentication and a Postgres backend for shared instances · plugin registry · optional on-device English-only fast path <em>if</em> the model landscape changes.</p>
+<h3 id="explicitly-never">Explicitly never</h3>
+<p>A native mobile application. Text-to-speech or spoken translation output. Any feature designed to conceal that recording is taking place.</p>
+<hr />
+<h2 id="10-risks-and-open-questions">10. Risks and open questions</h2>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Risk</th><th>Impact</th><th>Spike / exit criterion</th></tr></thead><tbody><tr><td><strong>R1</strong></td><td><strong>Serbian ASR quality is unverified and may be poor.</strong> Dual script (Cyrillic/Latin) compounds evaluation and normalisation</td><td>High — Serbian is a stated requirement</td><td>Benchmark <code>large-v3</code>, <code>large-v3-turbo</code>, and ≥ 1 cloud provider on ≥ 10 minutes of labelled Serbian, per script, recorded through the browser client. <strong>Exit:</strong> NFR-ACC-3 confirmed or replaced by measured figures, and the Serbian path (local vs. cloud-required) decided from data</td></tr><tr><td><strong>R2</strong></td><td><strong>Live mode (&lt; 2.5 s) may not be achievable locally for RU/SR.</strong> Whisper is not streaming; the sliding window may show unacceptable latency or excessive rewriting</td><td>Medium — Balanced mode remains viable</td><td>Prototype LocalAgreement-2 over <code>faster-whisper</code>; measure median/p95 latency and rewrite rate. <strong>Exit:</strong> NFR-PERF-1 met locally, or Live mode documented as cloud-ASR-only for those languages</td></tr><tr><td><strong>R3</strong></td><td><strong>Diarization from a single near-field microphone at 1.5 m</strong> is materially harder than from an array, and is the weak point of the whole system</td><td>High — bad attribution undermines every artifact</td><td>Record a real 4-person meeting with a phone on the table; measure DER. <strong>Exit:</strong> NFR-ACC-4/5 table-condition figures confirmed or revised from measurement</td></tr><tr><td><strong>R4</strong></td><td><strong>iOS Safari suspends background tabs aggressively</strong>, and may interrupt capture even with Wake Lock held</td><td>High for iOS users</td><td>Test a 30-minute iOS recording with the screen on and the tab foregrounded. <strong>Exit:</strong> either iOS works within the documented constraint, or iOS is documented as desk-only with an in-app warning</td></tr><tr><td><strong>R5</strong></td><td><strong>Client-side buffering may not survive a long outage</strong> — IndexedDB quota, tab throttling, or memory pressure</td><td>Medium</td><td>Test a 5-minute disconnection mid-session on a mid-range Android device. <strong>Exit:</strong> NFR-PERF-7 met, and behaviour past the buffer cap is defined and communicated to the user</td></tr><tr><td><strong>R6</strong></td><td><strong>Browser audio preprocessing</strong> (echo cancellation, noise suppression, AGC) is tuned for single-voice calls and may suppress quieter participants</td><td>Medium — could silently harm group recordings</td><td>Measure WER and DER with each constraint on and off on the table-condition clip. <strong>Exit:</strong> correct defaults chosen from data, and FR-CAP-11 exposes them</td></tr><tr><td><strong>R7</strong></td><td><strong>Mobile data cost.</strong> Raw PCM is ~115 MB/hour</td><td>Medium</td><td>Implement the Opus transport mode (<a href="#57-audio-transport">§5.7</a>) and measure real bandwidth. <strong>Exit:</strong> NFR-RES-4 met, with automatic mode selection verified</td></tr><tr><td><strong>R8</strong></td><td><strong>Mid-session mode switching may be unstable</strong> if pipeline stages hold state</td><td>Low — FR-LAT-3 is a <em>should</em></td><td>Switch only at VAD boundaries. <strong>Exit:</strong> 20 consecutive switches lose no finalised utterance</td></tr><tr><td><strong>R9</strong></td><td><strong>Whisper hallucinates</strong> on silence, music, and noise</td><td>Medium</td><td>VAD gating plus a no-speech-probability threshold; add silence and noise cases to the corpus. <strong>Exit:</strong> NFR-ACC-6 met</td></tr><tr><td><strong>R10</strong></td><td><strong>Cloud LLM cost</strong> on long sessions with per-utterance translation</td><td>Medium</td><td>Measure cost on a 60-minute 4-person session; batch short utterances; per-session budget with local fallback. <strong>Exit:</strong> a documented cost-per-hour figure per configuration</td></tr><tr><td><strong>R11</strong></td><td><strong>Plugins run in-process with full server privileges</strong></td><td>Medium — documented, not eliminated in v1</td><td>Document the trust boundary (NFR-SEC-6). <strong>Exit:</strong> plugin documentation opens with the warning. Process isolation is a v3 consideration</td></tr><tr><td><strong>R12</strong></td><td>~~The server must be awake to record~~ — <strong>closed in v1.4</strong> by specifying a dedicated always-on host (<a href="#63-server-hardware-tiers">§6.3</a>). Residual exposure (reboots, power cuts, being out of Tailscale reach) is handled by FR-CAP-17 and surfaced by FR-UI-18</td><td>Low</td><td>—</td></tr><tr><td><strong>R13</strong></td><td><strong>Russian–English code-switching.</strong> Whisper detects one language per window, but bilingual speakers mix languages inside a single sentence. FR-ASR-7 permits pinning several languages, which the model cannot truly honour</td><td><strong>High for this operator&#x27;s daily use</strong> — likely to bite harder than R1</td><td>Measure WER on a deliberately code-switched RU/EN clip against (a) auto-detect, (b) pinned <code>ru</code>, (c) a cloud backend. <strong>Exit:</strong> either a configuration that handles mixing acceptably is identified, or the limitation is documented and surfaced in the UI when several languages are pinned</td></tr></tbody></table></div>
+<hr />
+<h2 id="11-appendices">11. Appendices</h2>
+<h3 id="111-on-device-asr-assessment-detail">11.1 On-device ASR assessment (detail)</h3>
+<p>Recorded because it is the load-bearing evidence for <a href="#7-decision-record-where-does-the-computation-run">§7</a> and should be re-checked when the landscape changes.</p>
+<div class="tablewrap"><table><thead><tr><th>Engine</th><th>Streaming</th><th>Model size</th><th>Phone realtime factor</th><th>Language notes</th></tr></thead><tbody><tr><td>Android <code>SpeechRecognizer</code> (on-device)</td><td>Native</td><td>OS-managed</td><td>Realtime, NPU</td><td>Best on Pixel; availability is OEM-dependent. Endpoints on silence, so long-form needs restart loops that lose audio at boundaries. Voice-command API, not a transcription API</td></tr><tr><td><code>whisper.cpp</code> <code>tiny</code>/<code>base</code></td><td>No (needs sliding window)</td><td>75–150 MB</td><td>~2–5× realtime</td><td>Quality inadequate for RU; unusable for SR</td></tr><tr><td><code>whisper.cpp</code> <code>small</code> q5</td><td>No</td><td>~470 MB</td><td>~1–2× realtime</td><td>Too slow once the sliding window&#x27;s 2–3× overhead is applied</td></tr><tr><td><code>whisper.cpp</code> <code>large-v3-turbo</code> q5</td><td>No</td><td>~800 MB</td><td>well below realtime</td><td>Not viable on phone CPU</td></tr><tr><td><code>sherpa-onnx</code> streaming Zipformer</td><td>Native, ~300 ms</td><td>100–300 MB</td><td>Faster than realtime</td><td>Technically the best on-device option. English strong; Russian model availability thin; <strong>no Serbian</strong></td></tr><tr><td>Vosk</td><td>Native</td><td>45 MB – 1.5 GB</td><td>Realtime</td><td>Russian model exists; quality well below Whisper; no Serbian</td></tr></tbody></table></div>
+<p>Also relevant: NNAPI deprecated in Android 15, leaving Qualcomm QNN and other vendor delegates as the only NPU paths — per-chip integration work an OSS project cannot sustain.</p>
+<h3 id="112-model-comparison-matrix-server-side">11.2 Model comparison matrix (server-side)</h3>
+<div class="tablewrap"><table><thead><tr><th>Model</th><th>Type</th><th>Languages</th><th>RU</th><th>SR</th><th>Realtime factor (Tier A)</th><th>License</th><th>Notes</th></tr></thead><tbody><tr><td>Whisper <code>large-v3-turbo</code></td><td>Batch ASR</td><td>99</td><td>Good</td><td>Fair (verify)</td><td>~8× faster than <code>large-v3</code></td><td>MIT</td><td>v1 default on Tier A</td></tr><tr><td>Whisper <code>medium</code> int8</td><td>Batch ASR</td><td>99</td><td>Fair</td><td>Weak</td><td>Near realtime on strong CPU</td><td>MIT</td><td>Tier B default</td></tr><tr><td>Whisper <code>small</code> int8</td><td>Batch ASR</td><td>99</td><td>Weak</td><td>Poor</td><td>Realtime on strong CPU</td><td>MIT</td><td>Low-resource only</td></tr><tr><td>Parakeet-TDT-v3</td><td>Batch ASR</td><td>25 European</td><td>Good</td><td><strong>Likely absent — verify</strong></td><td>Very fast</td><td>CC-BY-4.0</td><td>Attractive if Serbian is handled separately</td></tr><tr><td>Deepgram Nova</td><td>Streaming ASR</td><td>Many</td><td>Good</td><td>Verify</td><td>Realtime (cloud)</td><td>Commercial</td><td>Live-mode candidate</td></tr><tr><td>Silero VAD</td><td>VAD</td><td>Language-agnostic</td><td>—</td><td>—</td><td>Sub-ms per frame</td><td>MIT</td><td>v1 default</td></tr><tr><td>sherpa-onnx diarization</td><td>Diarization</td><td>Language-agnostic</td><td>—</td><td>—</td><td>Faster than realtime</td><td>Apache-2.0</td><td>v1 default, no PyTorch</td></tr><tr><td>pyannote 3.1</td><td>Diarization</td><td>Language-agnostic</td><td>—</td><td>—</td><td>~1–3× realtime on CPU</td><td>MIT (gated models)</td><td>Opt-in accuracy backend</td></tr><tr><td>Opus-MT / MADLAD-400</td><td>NMT</td><td>Many</td><td>Good</td><td>Fair</td><td>Fast</td><td>Permissive</td><td>Local translation fallback</td></tr><tr><td>NLLB-200-distilled-600M</td><td>NMT</td><td>200</td><td>Good</td><td>Good</td><td>Fast</td><td><strong>CC-BY-NC</strong></td><td>Opt-in only — non-commercial</td></tr><tr><td>OpenAI frontier model</td><td>LLM</td><td>Multilingual</td><td>Excellent</td><td>Good</td><td>Cloud</td><td>Commercial</td><td>Default for translation and plugins. The exact model is set via <code>llm.model</code> and is deliberately not pinned here — see <a href="#62-technology-choices-and-rejected-alternatives">§6.2</a></td></tr><tr><td>Local model via Ollama / vLLM / llama.cpp</td><td>LLM</td><td>Multilingual</td><td>Varies by model</td><td>Weak</td><td>Local</td><td>Model-dependent</td><td>Offline fallback through the same OpenAI-compatible client. Serbian quality is the limiting factor</td></tr></tbody></table></div>
+<p>Entries marked <em>verify</em> are the subject of R1 and must be measured before v1 release (NFR-EVAL-4).</p>
+<h3 id="113-hardware-notes">11.3 Hardware notes</h3>
+<p>One purchase is now assumed — an always-on server (<a href="#63-server-hardware-tiers">§6.3</a>). Everything else is optional.</p>
+<div class="tablewrap"><table><thead><tr><th>Item</th><th>Approx. price</th><th>Effect</th></tr></thead><tbody><tr><td><strong>Intel N100/N150 mini PC, 16 GB — recommended server</strong></td><td>~$170</td><td>Tier B. The cheapest box that reaches the <a href="#42-accuracy">§4.2</a> targets without sending audio off your network. ~12 W, fanless models exist</td></tr><tr><td>Raspberry Pi 5, 8–16 GB</td><td>~$100</td><td>Tier C. Lower power and cost; local ASR is limited to <code>small</code> at around realtime, so Batch is viable and Live is not</td></tr><tr><td>Raspberry Pi 4, 4–8 GB</td><td>~$60</td><td>Tier D. Fine as a host, insufficient as an inference machine — <strong>implies cloud ASR</strong> for usable Russian and any Serbian</td></tr><tr><td>USB SSD for the server, 250 GB+</td><td>~$35</td><td><strong>Effectively required on Pi-class hardware.</strong> SD cards fail under sustained write and take the history with them</td></tr><tr><td>Any decent USB microphone plugged into the <strong>client</strong></td><td>$60–100</td><td>Moves a meeting from table to near-desk condition — still the single largest accuracy gain available, and it needs no code</td></tr><tr><td>Mini PC with NVIDIA GPU, or an Apple Silicon Mac</td><td>$500+</td><td>Tier A: <code>large-v3-turbo</code> and Live mode entirely local. A Mac you already own is the cheapest route</td></tr><tr><td>Powerbank for long phone recordings</td><td>~$30</td><td>Wake Lock keeps the screen on, which drains battery faster than usual</td></tr></tbody></table></div>
+<h3 id="114-document-conventions">11.4 Document conventions</h3>
+<ul><li>Requirement IDs are stable. Withdrawn requirements are marked withdrawn rather than renumbered (see FR-CAP-14).</li><li>Every <strong>Must</strong> requirement has a mechanically checkable acceptance criterion.</li><li>Accuracy figures in <a href="#42-accuracy">§4.2</a> are <strong>targets pending measurement</strong> (NFR-EVAL-4), not commitments.</li></ul>
+<hr />
+<h2 id="open-questions-for-the-maintainer">Open questions for the maintainer</h2>
+<ol><li><strong>What will the server run on?</strong> This selects a tier in <a href="#63-server-hardware-tiers">§6.3</a> and pins model choices. On an Apple Silicon Mac, <code>whisper.cpp</code> with Metal may beat <code>faster-whisper</code> as the default.</li><li><strong>Do you have labelled Serbian audio,</strong> or can you record 10 minutes through the browser client? R1 cannot close without it, and it is the largest unknown in this specification.</li><li><strong>Which cloud ASR provider,</strong> if any, as the Live-mode and weak-language fallback? It changes the credential and cost model.</li><li><strong>Will you record on iOS?</strong> If yes, R4 moves up in priority — it is the harshest browser environment and worth testing before building much else.</li></ol>
+  </main>
+</div>
+
+<script>
+const links = Array.from(document.querySelectorAll('.rail a'));
+const byId = new Map(links.map(a => [a.getAttribute('href').slice(1), a]));
+const targets = links
+  .map(a => document.getElementById(a.getAttribute('href').slice(1)))
+  .filter(Boolean);
+
+let current = null;
+function setActive(id) {
+  if (id === current) return;
+  current = id;
+  links.forEach(a => a.classList.remove('active'));
+  const link = byId.get(id);
+  if (link) link.classList.add('active');
+}
+
+const observer = new IntersectionObserver((entries) => {
+  const visible = entries
+    .filter(e => e.isIntersecting)
+    .sort((a, b) => a.boundingClientRect.top - b.boundingClientRect.top);
+  if (visible.length) {
+    setActive(visible[0].target.id);
+    return;
+  }
+  const above = targets.filter(t => t.getBoundingClientRect().top < 120);
+  if (above.length) setActive(above[above.length - 1].id);
+}, { rootMargin: '-10% 0px -70% 0px', threshold: 0 });
+
+targets.forEach(t => observer.observe(t));
+</script>

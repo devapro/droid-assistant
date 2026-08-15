@@ -1,0 +1,37 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Instance data — sessions, audio, and downloaded weights
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Client
+node_modules/
+web/dist/
+# Built by `npm run build`; not source
+src/droid_assistant/static/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Local tooling
+.DS_Store
+.idea/
+.vscode/
+
+# Playwright. The fixture WAV is committed: it is synthetic speech, it is
+# deterministic, and without it the browser suite cannot run in CI at all.
+web/test-results/
+web/playwright-report/

@@ -1,0 +1,43 @@
+# CUDA variant. Same application; a base image carrying cuBLAS and cuDNN, which
+# is what CTranslate2 links against for GPU inference.
+FROM node:22-alpine AS client
+WORKDIR /web
+COPY web/package.json web/package-lock.json* ./
+RUN npm ci --no-audit --no-fund
+COPY web/ ./
+RUN npm run build
+
+FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04 AS runtime
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        python3.12 python3.12-venv ffmpeg libgomp1 curl \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+WORKDIR /app
+ENV UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy \
+    PYTHONUNBUFFERED=1 \
+    DROID_DATA_DIR=/data \
+    DROID_MODELS_DIR=/models \
+    DROID_LOG_JSON=1 \
+    DROID_SERVER__HOST=0.0.0.0
+
+COPY pyproject.toml README.md ./
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv venv --python 3.12 && uv sync --extra local --extra cloud --no-install-project
+
+COPY src/ ./src/
+COPY eval/ ./eval/
+COPY --from=client /src/droid_assistant/static ./src/droid_assistant/static
+RUN --mount=type=cache,target=/root/.cache/uv uv sync --extra local --extra cloud
+
+VOLUME ["/data", "/models"]
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=120s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8000/api/health || exit 1
+
+ENTRYPOINT ["uv", "run", "droid-assistant"]
+CMD ["serve"]

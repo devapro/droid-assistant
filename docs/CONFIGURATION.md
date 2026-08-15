@@ -1,0 +1,250 @@
+# Configuration
+
+Configuration is a TOML file at `$DROID_DATA/config.toml`, overridable by
+environment variables. Precedence, highest first:
+
+1. environment variables — `DROID_ASR__MODEL=medium`
+2. `config.toml`
+3. defaults
+
+Everything is validated at startup. An invalid value fails with a message naming
+the field, the value it got, and what it accepts — never a `KeyError` forty
+minutes into a meeting (FR-CFG-2).
+
+**Credentials are never configuration fields.** Config stores the *name* of the
+environment variable to read (`api_key_env`), so no key material can reach a log
+line, an API response, or a config export (FR-CFG-4).
+
+## A minimal file
+
+```toml
+[server]
+data_dir = "/mnt/ssd/droid"
+
+[capture]
+languages = ["en", "ru"]
+target_language = "en"
+
+[asr]
+model = "large-v3-turbo"
+```
+
+## `[server]`
+
+| Field | Default | Notes |
+|---|---|---|
+| `host` | `"127.0.0.1"` | Loopback by default. LAN exposure must be a deliberate edit (NFR-SEC-1) |
+| `port` | `8000` | |
+| `data_dir` | `./data` | Or `$DROID_DATA_DIR`. Put this on an SSD, not an SD card |
+| `allowed_origins` | `[]` | Exact origins accepted on a WebSocket upgrade when not on loopback (NFR-SEC-4) |
+| `disconnect_grace_s` | `90.0` | How long a session survives its recording client vanishing (FR-SES-4). Raise it if you switch apps often |
+| `min_free_disk_mb` | `2048` | Below this, starting a session is refused rather than failing part-way (NFR-RES-7) |
+| `warn_free_disk_mb` | `8192` | Must be ≥ `min_free_disk_mb` |
+| `log_level` | `"info"` | `debug` \| `info` \| `warning` \| `error` |
+
+## `[capture]`
+
+| Field | Default | Notes |
+|---|---|---|
+| `languages` | `["en","ru","sr"]` | What the UI offers. Operator-editable, never hard-coded (FR-CFG-3) |
+| `target_language` | `"en"` | Must appear in `languages` |
+| `default_mode` | `"balanced"` | `live` \| `balanced` \| `batch` |
+| `chunk_ms` | `200` | Audio chunk size. Smaller is lower latency and more overhead |
+| `echo_cancellation` | `false` | See below |
+| `noise_suppression` | `false` | See below |
+| `auto_gain_control` | `false` | See below |
+| `client_buffer_cap_mb` | `256` | Client-side buffer ceiling (NFR-RES-5) |
+
+**On the three audio-processing defaults.** All three are off, and that is
+deliberate. They are tuned for a single near voice on a call, and noise
+suppression in particular will attenuate the quieter people at a meeting table —
+the exact recording this product exists for. Turn them on for one-to-one
+dictation if it helps; leave them off for meetings. R6 exists to replace this
+reasoning with a measurement.
+
+## `[vad]`
+
+| Field | Default | Notes |
+|---|---|---|
+| `backend` | `"silero"` | `silero` \| `energy`. Energy is a fallback for machines where onnxruntime will not install, and is much worse in noise |
+| `threshold` | `0.5` | Speech probability above which a frame counts as speech |
+| `min_speech_ms` | `250` | Shorter bursts are discarded — a door closing is not an utterance |
+| `min_silence_ms` | `700` | A pause this long ends an utterance. **This is the main latency knob in Balanced mode**: every result is delayed by exactly this much |
+| `speech_pad_ms` | `200` | Padding on both edges, so no word is clipped |
+| `max_speech_ms` | `30000` | Ceiling, so a monologue is not one enormous utterance |
+
+## `[asr]`
+
+| Field | Default | Notes |
+|---|---|---|
+| `backend` | `"faster_whisper"` | `faster_whisper` \| `whisper_cpp` \| `deepgram` \| `openai` \| `mock` |
+| `model` | `"large-v3-turbo"` | Tier A. Use `medium`/`small` int8 on Tier B, `small` on Tier C |
+| `device` | `"auto"` | `auto` \| `cpu` \| `cuda` \| `metal`. CTranslate2 has no Metal path — use `whisper_cpp` on a Mac to reach the GPU |
+| `compute_type` | `"auto"` | `int8` on CPU, `float16` on CUDA |
+| `beam_size` | `5` | Lower is faster and slightly worse |
+| `no_speech_threshold` | `0.6` | Above this probability a segment is dropped as a hallucination (FR-ASR-9) |
+| `condition_on_previous_text` | `false` | `true` amplifies hallucination loops. Leave it off |
+| `word_timestamps` | `true` | Needed for click-to-seek (FR-ASR-5) |
+| `serbian_script` | `"latin"` | `latin` \| `cyrillic`. Output is normalised to one script (FR-ASR-10) |
+
+### `[asr.deepgram]`
+
+Used when `asr.backend = "deepgram"`.
+
+| Field | Default | Notes |
+|---|---|---|
+| `api_key_env` | `"DEEPGRAM_API_KEY"` | Variable *name*, never a key |
+| `model` | `"nova-2"` | |
+| `endpoint` | Deepgram's | Point it at another Deepgram-shaped provider without a code change |
+| `price_per_minute_usd` | `0.0043` | Reporting only. Check it against your own contract — list and negotiated pricing are rarely the same |
+
+### `[asr.openai]`
+
+Used when `asr.backend = "openai"`. It reuses the credential the translation and
+plugin features already need, so there is no second account to set up.
+
+Two endpoints sit behind this one backend: Balanced and Batch mode post each
+VAD-closed segment to `/v1/audio/transcriptions`, while Live mode streams over
+the Realtime WebSocket — the only genuinely streaming path of the two.
+
+| Field | Default | Notes |
+|---|---|---|
+| `api_key_env` | `"OPENAI_API_KEY"` | Variable *name*, never a key |
+| `base_url` | OpenAI | Any API-compatible gateway |
+| `model` | `"gpt-4o-transcribe"` | Balanced and Batch mode |
+| `realtime_model` | `"gpt-live-transcribe"` | Live mode |
+| `realtime_url` | Realtime WS | Configurable because the transcription-session query string is not pinned in the published API |
+| `realtime_delay` | `"low"` | `minimal` \| `low` \| `medium` \| `high` \| `xhigh` — the provider's own latency dial |
+| `prompt` | `""` | Standing steering text, combined with the per-session vocabulary |
+| `price_per_minute_usd` | published rates | Per-model table, used only to *report* spend |
+| `fallback_price_per_minute_usd` | `0.006` | Used for a model absent from the table, so an unknown model reports something rather than nothing |
+
+**Choosing a model is a real trade, not a preference:**
+
+| Model | Word timings | Speaker labels | Use it when |
+|---|---|---|---|
+| `gpt-4o-transcribe` | no | no | the general default |
+| `gpt-4o-mini-transcribe` | no | no | cost matters more than accuracy |
+| `gpt-4o-transcribe-diarize` | no | **yes** | you want speakers from the recogniser rather than from `[diarization]` |
+| `whisper-1` | **yes** | no | you want click-a-word-to-seek (FR-ASR-5) |
+
+The backend reports these differences in its capabilities rather than claiming
+everything, so the UI shows what you will actually get. With
+`gpt-4o-transcribe-diarize`, the model's speaker labels are used in preference
+to the pipeline's own clustering — otherwise you would be paying for a result
+that gets discarded.
+
+**Audio leaves your machine either way.** `privacy.local_only = true` refuses to
+start with any cloud ASR backend, and the UI marks such sessions.
+
+## `[diarization]`
+
+| Field | Default | Notes |
+|---|---|---|
+| `enabled` | `true` | `false` gives unattributed transcripts, which is fine for dictation |
+| `backend` | `"sherpa"` | `sherpa` \| `pyannote` \| `mock`. `pyannote` is more accurate and needs a Hugging Face token plus two gated licence acceptances |
+| `min_speakers` / `max_speakers` | `null` | `null` infers the count (FR-DIA-2). Setting both to the same value pins it, which is the single most effective correction for a known group (FR-DIA-3) |
+| `clustering_threshold` | `0.5` | Lower merges two people into one label; higher fragments one person across several |
+
+## `[translation]`
+
+| Field | Default | Notes |
+|---|---|---|
+| `enabled` | `true` | |
+| `backend` | `"llm"` | `llm` \| `ctranslate2` \| `identity` |
+| `context_utterances` | `6` | Rolling context (FR-TRA-3). Below about 4, pronoun and gender agreement in Slavic source text starts to fail — which is the whole reason this exists |
+| `batch_max_utterances` | `4` | Batch short consecutive turns into one request (FR-TRA-9) |
+| `batch_max_chars` | `240` | |
+| `batch_max_delay_ms` | `600` | The ceiling that keeps batching from breaking the latency budget |
+| `local_model` | Opus-MT | Local fallback. Permissively licensed, so shippable as a default |
+
+## `[llm]`
+
+One OpenAI-shaped client serves both the cloud and a local endpoint. Point
+`base_url` at Ollama, vLLM, LM Studio, or llama.cpp and everything else is
+unchanged — that is what makes "works with no internet" nearly free.
+
+| Field | Default | Notes |
+|---|---|---|
+| `base_url` | OpenAI | `http://localhost:11434/v1` for Ollama |
+| `model` | `"gpt-4.1-mini"` | |
+| `api_key_env` | `"OPENAI_API_KEY"` | Ignored by local endpoints |
+| `max_tokens` | `2048` | |
+| `temperature` | `0.2` | |
+| `timeout_s` | `60.0` | |
+| `max_retries` | `3` | Exponential backoff with jitter (NFR-REL-4) |
+| `price_per_1m_input_usd` | `0.40` | Used only to *report* spend. Wrong values cost accuracy, not money |
+| `price_per_1m_output_usd` | `1.60` | |
+
+## `[privacy]`
+
+| Field | Default | Notes |
+|---|---|---|
+| `local_only` | `false` | Disables every outbound call. Cloud-dependent features report as unavailable rather than failing one by one (FR-CFG-5) |
+| `session_cost_ceiling_usd` | `0.0` | `0` means none. Counts **recognition and translation together**, because an operator means one budget for the session. On reaching it both switch to local processing and the session reports the change rather than failing (FR-CFG-7). If no local backend is available it says so and continues — failing the session is explicitly what the requirement forbids |
+
+### What a session costs
+
+Every paid call is attributed to the session and to a component, so the session
+view can say *what* the money went on rather than only how much:
+
+```json
+{"cost_usd": 0.0182, "cost_breakdown": {"asr": 0.0142, "translation": 0.0040}}
+```
+
+Recognition is billed on **audio sent to the provider**, at the published
+per-minute rate. Two consequences worth knowing:
+
+- **Live mode over a cloud recogniser costs several times Balanced mode.** The
+  sliding window re-sends overlapping audio, so a ten-minute session can bill
+  twenty-five minutes. The figure reported is audio *sent*, which is the honest
+  one. Prefer Balanced on a cloud backend unless you need the latency.
+- **`gpt-live-transcribe` is roughly three times `gpt-4o-transcribe`** per
+  minute, before that multiplier.
+
+**Every figure is an estimate**, computed from published list prices and audio
+duration. A negotiated rate, a minimum billing increment, or a request that
+failed after being billed will all make it differ from the invoice. The UI
+labels it as such.
+
+## `[plugins]`
+
+| Field | Default | Notes |
+|---|---|---|
+| `directory` | `./plugins` | Drop-in `.py` files, loaded at startup |
+| `enabled` | `null` | `null` means every discovered plugin. A list narrows it |
+| `timeout_s` | `180.0` | Per handler invocation |
+
+## `[audio]`
+
+| Field | Default | Notes |
+|---|---|---|
+| `persist` | `true` | `false` means no playback and no re-processing |
+| `codec` | `"opus"` | `opus` \| `wav` \| `flac`. Opus needs ffmpeg; without it you silently get WAV, and are told once |
+| `bitrate_kbps` | `32` | ≈ 15 MB/hour, comfortably inside the 30 MB/h budget (NFR-RES-3) |
+
+## Environment variables
+
+Any field, with `__` between the sections:
+
+```bash
+DROID_DATA_DIR=/mnt/ssd/droid
+DROID_SERVER__PORT=9000
+DROID_ASR__BACKEND=deepgram
+DROID_PRIVACY__LOCAL_ONLY=true
+DROID_CAPTURE__LANGUAGES='["en","ru"]'     # lists are JSON
+DROID_LOG_JSON=1                            # structured logs for journald
+DROID_LOG_PIPELINE=debug                    # per-component level (NFR-MNT-3)
+DROID_MODELS_DIR=/srv/shared-models         # weights are regenerable and large
+```
+
+## Changing configuration without a restart
+
+`PATCH /api/config`, or Settings → Backends, can change the ASR, translation,
+and LLM backends, the target language, the default mode, local-only, and the
+cost ceiling. These take effect **on the next session**; a running session keeps
+the backend it started with, because swapping a model out from under a live
+pipeline is exactly the surprise this feature exists to avoid (FR-CFG-8).
+
+Log levels apply immediately. Everything else needs a restart, and the API says
+which is which.

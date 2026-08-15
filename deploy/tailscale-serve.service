@@ -1,0 +1,15 @@
+# Re-applies `tailscale serve` after a reboot, so the HTTPS origin the client is
+# bookmarked against keeps working without intervention (SRS §8.5).
+[Unit]
+Description=Expose droid-assistant over Tailscale HTTPS
+After=tailscaled.service droid-assistant.service
+Wants=tailscaled.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+ExecStart=/usr/bin/tailscale serve --bg 8000
+ExecStop=/usr/bin/tailscale serve --https=443 off
+
+[Install]
+WantedBy=multi-user.target

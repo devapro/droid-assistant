@@ -1,0 +1,33 @@
+# CPU deployment. `docker compose up -d` and the server is running.
+#
+# `docker compose down -v` deletes the named volumes and every recorded session
+# with them. Use plain `down` unless you mean it.
+
+services:
+  droid-assistant:
+    build: .
+    image: droid-assistant:latest
+    container_name: droid-assistant
+    restart: unless-stopped
+    ports:
+      # Loopback only. Tailscale Serve puts HTTPS in front of it; publishing to
+      # 0.0.0.0 here would expose an instance that has no authentication.
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - droid-data:/data
+      - droid-models:/models
+      # Drop-in plugins. Read-only: the server never writes here, and a plugin
+      # is arbitrary code, so mounting it writable buys nothing.
+      - ./plugins:/app/plugins:ro
+    environment:
+      DROID_SERVER__HOST: 0.0.0.0
+      DROID_ASR__BACKEND: ${DROID_ASR_BACKEND:-faster_whisper}
+      DROID_ASR__MODEL: ${DROID_ASR_MODEL:-large-v3-turbo}
+    env_file:
+      - path: .env
+        required: false
+    stop_grace_period: 60s   # let an in-flight session finalise rather than truncate
+
+volumes:
+  droid-data:
+  droid-models:

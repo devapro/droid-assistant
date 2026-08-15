@@ -1,0 +1,187 @@
+[project]
+name = "droid-assistant"
+version = "1.0.0.dev0"
+description = "Self-hosted conversation intelligence agent with a browser-based client"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [{ name = "droid-assistant contributors" }]
+keywords = ["asr", "transcription", "diarization", "translation", "self-hosted"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Framework :: FastAPI",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Multimedia :: Sound/Audio :: Speech",
+]
+
+# Core install: the server runs, stores, serves the client, and dispatches
+# plugins. Every model-bearing dependency is an extra, so a `uv sync` on a
+# Tier D box is seconds rather than gigabytes (NFR-PORT-4).
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "python-multipart>=0.0.12",
+    "numpy>=1.26",
+    "httpx>=0.27",
+    "typer>=0.15",
+    "rich>=13.9",
+]
+
+[project.optional-dependencies]
+# Fully local pipeline: VAD + ASR + diarization + NMT, no network (C-3, FR-ASR-2).
+local = [
+    "faster-whisper>=1.1",
+    "onnxruntime>=1.20",
+    "sherpa-onnx>=1.10",
+    # `sherpa-onnx` carries only the Python extension; the native ONNX Runtime
+    # it links against lives here. It is a transitive dependency, but the flat
+    # index it comes from exposes no metadata at resolve time, so uv never sees
+    # it unless it is named. Omitting it produces a `Library not loaded` at
+    # import — an installed package that cannot be imported.
+    "sherpa-onnx-core>=1.10",
+    "ctranslate2>=4.5",
+    "transformers>=4.46",
+]
+# Cloud ASR and LLM paths (FR-ASR-3, FR-TRA-1).
+cloud = [
+    "openai>=1.57",
+    "websockets>=13.1",
+]
+# Opt-in accuracy backend; needs a Hugging Face token and gated-model acceptance.
+pyannote = [
+    "pyannote.audio>=3.3",
+    "torch>=2.5",
+]
+# Apple Silicon alternative ASR backend.
+whispercpp = ["pywhispercpp>=1.2"]
+# Semantic search (v2) and embedding storage acceleration.
+vec = ["sqlite-vec>=0.1.6"]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "types-requests",
+    "jiwer>=3.0",
+]
+
+[project.scripts]
+droid-assistant = "droid_assistant.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/arsenii/droid-assistant"
+Documentation = "https://github.com/arsenii/droid-assistant/blob/main/README.md"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/droid_assistant"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"src/droid_assistant/static" = "droid_assistant/static"
+
+[tool.uv]
+package = true
+
+# sherpa-onnx has no PyPI wheel for every platform, and building it from source
+# produces an extension that cannot find its own ONNX Runtime — the failure is a
+# `Library not loaded` at import time on macOS arm64. The project's own index
+# carries prebuilt wheels plus the `sherpa-onnx-core` package holding the native
+# library, so `uv sync --extra local` works without a compiler.
+[[tool.uv.index]]
+name = "k2-fsa"
+url = "https://k2-fsa.github.io/sherpa/onnx/cpu.html"
+format = "flat"
+explicit = true
+
+[tool.uv.sources]
+sherpa-onnx = { index = "k2-fsa" }
+sherpa-onnx-core = { index = "k2-fsa" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "eval", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "F", "W",      # pycodestyle + pyflakes
+    "I",                # isort
+    "UP",               # pyupgrade
+    "B",                # bugbear
+    "SIM",              # simplify
+    "RUF",
+    "ASYNC",
+    "T20",              # no stray print() in the package
+]
+ignore = [
+    # FastAPI's `Depends()` in a default argument is the framework's idiom.
+    "B008",
+    # `load()` and `close()` on the backend base classes are optional lifecycle
+    # hooks with a working default. Making them abstract would force every
+    # backend to write two no-op methods to say nothing.
+    "B027",
+    # Cyrillic and Serbian text appear throughout the comments, docstrings, and
+    # test fixtures of a project about Russian and Serbian speech.
+    "RUF001", "RUF002", "RUF003",
+    # `timeout` parameters on our own async helpers (`RingBuffer.wait`,
+    # `PluginHost.drain`) are part of their contract. Pushing callers to wrap
+    # every call in `asyncio.timeout()` would make the call sites worse.
+    "ASYNC109",
+    # `Path.exists()` / `.stat()` / `.unlink()` on local files are microsecond
+    # syscalls. Introducing anyio to await them would add a dependency and a
+    # thread hop to save nothing measurable.
+    "ASYNC240",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"eval/*" = ["T20"]
+"src/droid_assistant/cli.py" = ["T20"]
+"tests/*" = ["T20", "RUF012"]
+# `subscribes = {Event.SESSION_END}` is the declarative form the plugin API
+# documents and the SRS §5.5 example uses. Requiring `ClassVar[frozenset[...]]`
+# in every plugin would trade a real ergonomic cost for a lint rule that the
+# base class's own annotation already answers.
+"src/droid_assistant/plugins/builtin/*" = ["RUF012"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+plugins = ["pydantic.mypy"]
+mypy_path = "src"
+exclude = ["^web/", "^tests/fixtures/"]
+
+# Model libraries ship no stubs; the boundary code around them is typed by hand.
+[[tool.mypy.overrides]]
+module = [
+    "faster_whisper.*",
+    "sherpa_onnx.*",
+    "onnxruntime.*",
+    "ctranslate2.*",
+    "transformers.*",
+    "pyannote.*",
+    "pywhispercpp.*",
+    "sqlite_vec.*",
+    "jiwer.*",
+    "openai.*",
+    "torch.*",
+    "websockets.*",
+    "scipy.*",
+]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+filterwarnings = ["error::DeprecationWarning:droid_assistant.*"]
+addopts = "-q --strict-markers"
+markers = [
+    "slow: soak and long-running tests, deselected by default in CI",
+    "models: requires downloaded model weights",
+]

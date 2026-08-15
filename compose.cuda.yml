@@ -1,0 +1,29 @@
+# CUDA deployment: `docker compose -f compose.cuda.yml up -d`.
+#
+# Needs the NVIDIA Container Toolkit on the host. Tier A hardware runs
+# `large-v3-turbo` at realtime, which is what makes Live mode viable locally.
+
+services:
+  droid-assistant:
+    extends:
+      file: compose.yml
+      service: droid-assistant
+    build:
+      context: .
+      dockerfile: Dockerfile.cuda
+    environment:
+      DROID_SERVER__HOST: 0.0.0.0
+      DROID_ASR__DEVICE: cuda
+      DROID_ASR__COMPUTE_TYPE: float16
+      DROID_ASR__MODEL: ${DROID_ASR_MODEL:-large-v3-turbo}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  droid-data:
+  droid-models:

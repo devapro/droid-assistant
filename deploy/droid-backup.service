@@ -1,0 +1,10 @@
+# Nightly backup. A backup you have to remember is not a backup (SRS §8.5).
+[Unit]
+Description=Back up the droid-assistant data directory
+After=droid-assistant.service
+
+[Service]
+Type=oneshot
+User=droid
+Environment="DROID_DATA_DIR=/var/lib/droid-assistant"
+ExecStart=/usr/local/bin/uv run --directory /opt/droid-assistant droid-assistant backup /var/backups/droid

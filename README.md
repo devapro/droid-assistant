@@ -1,0 +1,148 @@
+# droid-assistant
+
+Open a web page on your phone, press record, and watch a speaker-attributed,
+optionally translated transcript appear live. Recognition, diarization,
+translation, and plugins run on a server you own.
+
+The phone is a microphone and a screen. The server is the brain. There is no
+native app and there will not be one — the reasoning is recorded in
+[SRS §7](docs/SRS.md#7-decision-record-where-does-the-computation-run).
+
+- **Live transcription** in three latency modes — Live, Balanced, Batch
+- **Speaker diarization** with no enrollment, renamable across a session
+- **Near-live translation** with rolling conversational context, so pronouns and
+  gender survive the trip out of Russian and Serbian
+- **Plugins** that receive conversation events and produce artifacts; summary
+  and action-items ship as references
+- **Local-first**: nothing leaves the machine unless you enable a cloud backend
+  (Deepgram or OpenAI transcription, both optional)
+
+---
+
+## Install
+
+```bash
+git clone https://github.com/arsenii/droid-assistant
+cd droid-assistant
+cp .env.example .env          # set OPENAI_API_KEY for translation and plugins
+docker compose up -d          # or: docker compose -f compose.cuda.yml up -d
+```
+
+Native, without Docker:
+
+```bash
+uv sync --extra local --extra cloud
+uv run droid-assistant models download
+uv run droid-assistant serve
+```
+
+Then **read the next section**, because on any device other than the server
+itself the app cannot access a microphone until you do.
+
+## HTTPS is not optional
+
+Browsers refuse microphone access outside a secure context. `http://localhost`
+counts, so a browser on the server works immediately — every other device needs
+real HTTPS.
+
+```bash
+tailscale up
+tailscale serve --bg 8000
+# → https://<machine>.<tailnet>.ts.net
+```
+
+That issues a genuine certificate, needs no port forwarding, works from outside
+your LAN, and provides the access control this project deliberately does not
+implement itself. Alternatives are in [docs/INSTALL.md](docs/INSTALL.md).
+
+Check everything at once:
+
+```bash
+uv run droid-assistant doctor
+```
+
+## Hardware
+
+The server is expected to be a small always-on machine.
+
+| Tier | Hardware | Local ASR ceiling | Modes without cloud |
+|---|---|---|---|
+| A | Apple Silicon Mac, or x86-64 + NVIDIA ≥ 6 GB | `large-v3-turbo` at realtime | all three |
+| **B — recommended** | Intel N100/N150 mini PC, 16 GB (~$170) | `small`/`medium` int8 | Balanced, Batch |
+| C | Raspberry Pi 5 | `small` int8, around realtime | Batch |
+| D | Raspberry Pi 4 | `tiny`/`base` only | **none — cloud ASR required** |
+
+A Pi 4 is an excellent always-on host and a poor inference host. It will run the
+web app, ingest, storage, and plugins comfortably, but Russian accuracy at
+`base` is weak and Serbian is unusable, so it implies cloud ASR. That is a
+supported configuration; it is simply a different trade.
+
+**Do not keep the database on a Pi's SD card.** Attach a USB SSD and point
+`DROID_DATA_DIR` at it. SD cards fail under sustained write and take the history
+with them.
+
+## Recording well
+
+This affects results more than any setting in the app.
+
+- Get the microphone close. 1.5 m is much worse than 0.5 m.
+- For a meeting that matters, use a laptop with a USB microphone — the browser
+  offers it like any other input, and it recovers most of the accuracy lost to a
+  phone on a table.
+- Keep the screen on. The app holds a Wake Lock; if the browser does not support
+  one, it says so.
+- **Turn off noise suppression for multi-speaker recordings.** It is tuned for a
+  single near voice and will suppress the quieter people at the table. It is off
+  by default here for that reason.
+- Record 30 seconds and check the transcript before a session you cannot repeat.
+
+## Accuracy, honestly
+
+Transcription is imperfect, and more so away from English. The targets in
+[SRS §4.2](docs/SRS.md#42-accuracy) are targets pending measurement against
+your own recordings, not promises — run `droid-assistant eval` against the
+corpus in `eval/corpus/` to get real numbers for your hardware and your voices.
+
+Serbian is the largest open question, and Russian–English code-switching is
+likely to bite harder in daily use: speech recognition detects **one language
+per window**, so a sentence that mixes languages will come out in whichever one
+the model picks. Pin a single language per session where you can.
+
+The product answer to all of this is correction, not denial: transcripts are
+editable, plugins re-run over the corrected text, and custom vocabulary is
+per session.
+
+## Documentation
+
+| | |
+|---|---|
+| [docs/SRS.md](docs/SRS.md) | The specification this implements |
+| [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) | Milestones and sequencing |
+| [docs/INSTALL.md](docs/INSTALL.md) | Install, HTTPS, always-on setup, backups |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Every configuration field |
+| [docs/PLUGINS.md](docs/PLUGINS.md) | Writing a plugin |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | How the pieces fit |
+
+## Recording law
+
+**Recording law varies by jurisdiction, and the operator — not this software —
+is responsible for lawful use.** Roughly a dozen US states require all-party
+consent. Germany criminalises recording confidential speech under §201 StGB.
+Serbia, Russia, and the EU each impose their own constraints.
+
+This project ships no feature designed to conceal that recording is taking
+place, and will not.
+
+## Security
+
+v1 has **no user authentication**. Access control is delegated to the network
+layer, which in practice means Tailscale. Do not expose an instance to the
+public internet without a reverse proxy that authenticates.
+
+**Plugins run in-process with full server privileges.** Installing a plugin is
+equivalent to running arbitrary code on the server. Read it first.
+
+## Licence
+
+Apache-2.0. Optional non-commercially-licensed models (NLLB-200) are opt-in and
+never a default.
