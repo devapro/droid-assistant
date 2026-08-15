@@ -34,17 +34,32 @@ class BackendError(RuntimeError):
 # --- ASR --------------------------------------------------------------------
 
 
-def build_asr(settings: Settings) -> ASRBackend:
-    name = settings.asr.backend
+def build_asr(settings: Settings, language: str | None = None) -> ASRBackend:
+    """Build the ASR backend for a session.
+
+    `language` selects a per-language override where one is configured
+    (`asr.by_language`), because no single model is best at every language —
+    Whisper is strongest across many, a specialised model wins on its own.
+    """
+    name, model = settings.asr.for_language(language)
+    asr = (
+        settings.asr
+        if model == settings.asr.model
+        else settings.asr.model_copy(update={"model": model})
+    )
     match name:
         case "faster_whisper":
             from .asr.faster_whisper import FasterWhisperBackend
 
-            return FasterWhisperBackend(settings.asr, settings.models_dir)
+            return FasterWhisperBackend(asr, settings.models_dir)
+        case "gigaam":
+            from .asr.gigaam import GigaAMBackend
+
+            return GigaAMBackend(settings.asr.gigaam, settings.models_dir)
         case "whisper_cpp":
             from .asr.whisper_cpp import WhisperCppBackend
 
-            return WhisperCppBackend(settings.asr, settings.models_dir)
+            return WhisperCppBackend(asr, settings.models_dir)
         case "deepgram":
             from .asr.deepgram import DeepgramBackend
 
@@ -60,7 +75,7 @@ def build_asr(settings: Settings) -> ASRBackend:
         case _:
             raise BackendError(
                 f"unknown asr.backend {name!r}. Available: faster_whisper, whisper_cpp, "
-                "deepgram, openai, mock."
+                "gigaam, deepgram, openai, mock."
             )
 
 
@@ -204,11 +219,33 @@ def validate(
                 "for every session (C-4). Sessions are flagged accordingly in the UI."
             )
 
-    for code in settings.capture.languages:
-        if not caps.supports_language(code):
+    languages = settings.capture.languages
+    if caps.languages is not None and len(caps.languages) == 1:
+        # A single-language model given other speech does not fail — it returns
+        # confident nonsense, which is far worse than an error at startup.
+        only = next(iter(caps.languages))
+        unsupported = [c for c in languages if c.split("-")[0] != only]
+        if unsupported and not settings.asr.by_language:
+            report.errors.append(
+                f"{caps.name} only recognises {only!r}, but {unsupported} are offered and no "
+                "per-language routing is configured. Add for example:\n"
+                f"      [asr.by_language.{only}]\n"
+                f'      backend = "{settings.asr.backend}"\n'
+                "  and leave asr.backend as a model that covers the rest."
+            )
+    else:
+        for code in languages:
+            if not caps.supports_language(code):
+                report.warnings.append(
+                    f"{caps.name} does not list {code!r} among its languages; sessions pinned "
+                    "to it may transcribe poorly."
+                )
+
+    for code in settings.asr.by_language:
+        if code not in languages:
             report.warnings.append(
-                f"{caps.name} does not list {code!r} among its languages; sessions pinned to it "
-                "may transcribe poorly."
+                f"asr.by_language has an entry for {code!r}, which is not in capture.languages "
+                f"{languages}, so it will never be used."
             )
 
     if len(settings.capture.languages) > 1:

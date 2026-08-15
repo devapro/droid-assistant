@@ -154,7 +154,13 @@ class SessionManager:
         self._check_disk()
 
         mode = spec.mode or settings.capture.default_mode
-        asr = services.asr
+        # A session pinned to one language may route to a different engine
+        # (asr.by_language) — a Russian-specialised model, say, while everything
+        # else stays on Whisper.
+        languages = spec.languages or list(settings.capture.languages)
+        pinned = languages[0] if len(languages) == 1 else None
+        asr = await services.asr_for(pinned)
+
         report = registry.validate(settings, asr, mode)
         if not report.ok:
             raise SessionError("; ".join(report.errors))
@@ -444,6 +450,9 @@ class Services:
     sessions: SessionManager = field(init=False)
     validation: registry.ValidationReport = field(default_factory=registry.ValidationReport)
     started_at: float = field(default_factory=time.time)
+    #: Extra backends built for `asr.by_language`, keyed by (backend, model).
+    _asr_by_language: dict[tuple[str, str], ASRBackend] = field(default_factory=dict)
+    _asr_lock: asyncio.Lock = field(default_factory=asyncio.Lock)
 
     def __post_init__(self) -> None:
         self.sessions = SessionManager(self)
@@ -531,12 +540,38 @@ class Services:
     async def shutdown(self) -> None:
         await self.sessions.stop_all()
         await self.plugins.stop()
+        for backend in self._asr_by_language.values():
+            with contextlib.suppress(Exception):
+                await backend.close()
+        self._asr_by_language.clear()
         with contextlib.suppress(Exception):
             await self.asr.close()
         if self.diarization is not None:
             with contextlib.suppress(Exception):
                 await self.diarization.close()
         await self.db.close()
+
+    async def asr_for(self, language: str | None) -> ASRBackend:
+        """The loaded ASR backend for a language, building it once.
+
+        Backends are cached by `(backend, model)`: loading weights costs seconds
+        and often gigabytes, and a per-language setup would otherwise pay that
+        again on every session that switches language.
+        """
+        key = self.settings.asr.for_language(language)
+        if key == (self.settings.asr.backend, self.settings.asr.model):
+            return self.asr
+        async with self._asr_lock:
+            cached = self._asr_by_language.get(key)
+            if cached is None:
+                log.info(
+                    "loading ASR for language",
+                    extra={"language": language, "backend": key[0], "model": key[1]},
+                )
+                cached = registry.build_asr(self.settings, language)
+                await cached.load()
+                self._asr_by_language[key] = cached
+            return cached
 
     async def reconfigure(self, settings: Settings) -> None:
         """Swap backends for the next session without a restart (FR-CFG-8).

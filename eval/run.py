@@ -198,19 +198,35 @@ async def evaluate_clip(
     return result
 
 
+#: Where each backend keeps its model name. They differ because a Whisper size,
+#: a Deepgram model, and a GigaAM variant are not the same kind of thing.
+_MODEL_FIELD = {
+    "gigaam": ("gigaam", "model"),
+    "deepgram": ("deepgram", "model"),
+    "openai": ("openai", "model"),
+}
+
+
 def _backend_settings(settings: Settings, name: str) -> Settings:
     """A copy of the configuration pointing at one backend.
 
     `Settings` is frozen, so this is a rebuild rather than a mutation — which is
     also what stops one backend's evaluation leaking into the next.
+
+    Accepts `backend` or `backend:model`, and routes the model to whichever
+    field that backend actually reads.
     """
     data = settings.model_dump()
-    if ":" in name:
-        backend, model = name.split(":", 1)
-        data["asr"]["backend"] = backend
-        data["asr"]["model"] = model
-    else:
-        data["asr"]["backend"] = name
+    backend, _, model = name.partition(":")
+    data["asr"]["backend"] = backend
+    # Per-language routing would silently override the backend under test.
+    data["asr"]["by_language"] = {}
+    if model:
+        section = _MODEL_FIELD.get(backend)
+        if section is None:
+            data["asr"]["model"] = model
+        else:
+            data["asr"][section[0]][section[1]] = model
     return Settings(**data)
 
 

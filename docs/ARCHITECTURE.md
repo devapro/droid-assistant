@@ -43,7 +43,8 @@ src/droid_assistant/
 │   ├── modes.py         Live · Balanced · Batch as data
 │   └── orchestrator.py  per-session: ingest → … → emit
 ├── backends/
-│   ├── asr/          base · faster_whisper · whisper_cpp · deepgram · openai_asr · mock
+│   ├── asr/          base · faster_whisper · whisper_cpp · gigaam · deepgram ·
+│   │                 openai_asr · mock
 │   ├── diarization/  base · sherpa · pyannote · mock
 │   ├── translation/  base · llm · ctranslate2
 │   ├── llm/          base · openai_compat

@@ -148,6 +148,73 @@ everything else, and typically worse at code-switching. Compare before adopting:
 droid-assistant eval --backends faster_whisper:large-v3-turbo,faster_whisper:<path>
 ```
 
+### `[asr.by_language]` — a different engine per language
+
+No model is best at everything. Whisper is the strongest all-rounder; a
+language-specialised model beats it on its own language and knows nothing else.
+Rather than choosing one compromise, route per language:
+
+```toml
+[asr]
+backend = "faster_whisper"
+model = "large-v3-turbo"        # everything not listed below
+
+[asr.by_language.ru]
+backend = "gigaam"              # Russian only
+```
+
+The route is chosen when a session **pins exactly one language**. With several
+pinned there is nothing to route on, so the default applies — and the model
+detects one language per window anyway (R13).
+
+Backends are loaded once and cached, so switching language between sessions does
+not reload weights.
+
+### `[asr.gigaam]` — Russian
+
+GigaAM is trained for Russian specifically. It runs through `sherpa-onnx`, which
+this project already uses for diarization, so it needs no PyTorch, no gated
+download, and no new dependency.
+
+| Field | Default | Notes |
+|---|---|---|
+| `model` | `"v3-rnnt"` | `v3-rnnt` \| `v3-ctc` \| `v2-rnnt` \| `v2-ctc` |
+| `num_threads` | `4` | |
+| `feature_dim` | `64` | Matches the published conversions |
+| `provider` | `"cpu"` | `cpu` \| `cuda` \| `coreml` |
+
+```bash
+droid-assistant models gigaam v3-rnnt
+```
+
+Measured against Whisper on this project's Russian set:
+
+| Backend | Russian WER | RTF |
+|---|---|---|
+| `faster_whisper:small` | 4.9% | 0.21 |
+| `faster_whisper:large-v3-turbo` | 3.3% | 0.39 |
+| `gigaam:v3-ctc` | 4.9% | **0.02** |
+| `gigaam:v3-rnnt` | **3.3%** | **0.02** |
+
+The accuracy figures tie on *this* set, because clean synthetic speech is easy
+and both models saturate. **The speed does not tie: GigaAM is roughly twenty
+times faster.** GigaAM's accuracy advantage is expected on spontaneous
+conversational Russian, which this corpus does not contain — so measure on your
+own recordings before concluding anything about quality.
+
+Two caveats that do not depend on the corpus:
+
+* **Russian only.** Configuring it as the global `asr.backend` alongside other
+  languages is refused at startup, because a single-language model given other
+  speech returns confident nonsense rather than an error.
+* **Worse at code-switching.** An English word inside a Russian sentence tends
+  to come back transliterated. If your speech mixes languages, Whisper may still
+  be the better choice despite being weaker at Russian alone.
+
+Licence: the upstream repository is MIT and permits commercial use. Some
+third-party pages describe the weights as non-commercial; if that matters to
+you, check the LICENSE in the model directory before relying on it.
+
 ### `[asr.deepgram]`
 
 Used when `asr.backend = "deepgram"`.

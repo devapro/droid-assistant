@@ -133,9 +133,18 @@ looks much worse than English, **check which model you are running first** —
 `GET /api/health` reports it. Those figures come from clean synthetic speech and
 are optimistic in absolute terms; the *ratio* between sizes is the point.
 
-If the stock model is still not good enough for your language, try a specialised
-fine-tune — `droid-assistant models suggest --language ru` lists some — and
-measure it against your own recordings rather than trusting anyone's benchmark.
+If the stock model is still not good enough for your language, use a different
+one **for that language only**:
+
+```toml
+[asr.by_language.ru]
+backend = "gigaam"        # Russian-specialised, local, ~20x faster than turbo
+```
+
+`droid-assistant models gigaam v3-rnnt` fetches it. Other languages keep using
+whatever `asr.backend` says. `droid-assistant models suggest --language ru` also
+lists Whisper fine-tunes. Measure any of them against your own recordings rather
+than trusting anyone's benchmark — including the one above.
 
 Serbian is the largest open question, and Russian–English code-switching is
 likely to bite harder in daily use: speech recognition detects **one language

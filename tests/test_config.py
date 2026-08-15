@@ -203,3 +203,77 @@ def test_models_dir_can_be_relocated(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("DROID_MODELS_DIR", str(tmp_path / "shared-models"))
     assert Settings().models_dir == tmp_path / "shared-models"
     os.environ.pop("DROID_MODELS_DIR")
+
+
+class TestPerLanguageRouting:
+    """FR-ASR-1 / FR-ASR-7: no single model is best at every language, so a
+    session pinned to one can route to an engine chosen for it."""
+
+    def test_the_default_applies_when_nothing_is_configured(self) -> None:
+        settings = Settings()
+        assert settings.asr.for_language("ru") == ("faster_whisper", "large-v3-turbo")
+        assert settings.asr.for_language(None) == ("faster_whisper", "large-v3-turbo")
+
+    def test_an_override_selects_a_different_backend(self) -> None:
+        settings = Settings(asr={"by_language": {"ru": {"backend": "gigaam"}}})
+        assert settings.asr.for_language("ru") == ("gigaam", "large-v3-turbo")
+        # Everything else is untouched — that is the point of routing per
+        # language rather than switching the default.
+        assert settings.asr.for_language("en") == ("faster_whisper", "large-v3-turbo")
+
+    def test_an_override_can_change_only_the_model(self) -> None:
+        settings = Settings(asr={"by_language": {"ru": {"model": "large-v3"}}})
+        assert settings.asr.for_language("ru") == ("faster_whisper", "large-v3")
+
+    def test_region_and_case_are_ignored(self) -> None:
+        settings = Settings(asr={"by_language": {"ru": {"backend": "gigaam"}}})
+        assert settings.asr.for_language("RU-ru")[0] == "gigaam"
+        assert settings.asr.for_language("ru-RU")[0] == "gigaam"
+
+    def test_the_backend_is_built_from_the_override(self) -> None:
+        from droid_assistant.backends import registry
+
+        settings = Settings(asr={"by_language": {"ru": {"backend": "gigaam"}}})
+        assert registry.build_asr(settings, "ru").capabilities.name.startswith("gigaam:")
+        assert registry.build_asr(settings, "en").capabilities.name.startswith("faster-whisper:")
+        # No language given means no routing decision to make.
+        assert registry.build_asr(settings).capabilities.name.startswith("faster-whisper:")
+
+
+class TestSingleLanguageModelGuard:
+    """A model that knows one language does not fail on another — it returns
+    confident nonsense. That has to be caught at startup, not read later."""
+
+    def test_a_russian_only_model_is_refused_for_a_multilingual_setup(self) -> None:
+        from droid_assistant.backends import registry
+
+        settings = Settings(
+            capture={"languages": ["en", "ru"], "target_language": "en"},
+            asr={"backend": "gigaam"},
+        )
+        report = registry.validate(settings, registry.build_asr(settings))
+        assert not report.ok
+        assert "only recognises 'ru'" in report.errors[0]
+        # The message contains the fix, not just the complaint.
+        assert "asr.by_language" in report.errors[0]
+
+    def test_routing_makes_the_same_setup_valid(self) -> None:
+        from droid_assistant.backends import registry
+
+        settings = Settings(
+            capture={"languages": ["en", "ru"], "target_language": "en"},
+            asr={"backend": "faster_whisper", "by_language": {"ru": {"backend": "gigaam"}}},
+        )
+        report = registry.validate(settings, registry.build_asr(settings, "en"))
+        assert report.ok
+
+    def test_an_unreachable_route_is_flagged(self) -> None:
+        from droid_assistant.backends import registry
+        from droid_assistant.backends.asr.mock import MockASRBackend
+
+        settings = Settings(
+            capture={"languages": ["en"], "target_language": "en"},
+            asr={"by_language": {"de": {"backend": "gigaam"}}},
+        )
+        report = registry.validate(settings, MockASRBackend())  # type: ignore[arg-type]
+        assert any("never be used" in warning for warning in report.warnings)

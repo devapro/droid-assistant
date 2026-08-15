@@ -292,6 +292,52 @@ def models_convert(
     )
 
 
+@models_app.command("gigaam")
+def models_gigaam(
+    variant: Annotated[str, typer.Argument(help="v3-rnnt | v3-ctc | v2-rnnt | v2-ctc")] = "v3-rnnt",
+    config: ConfigOption = None,
+) -> None:
+    """Download GigaAM, the Russian-specialised local model.
+
+    It runs through sherpa-onnx, which is already a dependency, so this needs no
+    PyTorch and no gated download. Russian only — pair it with `asr.by_language`
+    so other languages keep using a multilingual model.
+    """
+    import tarfile
+
+    from .backends.asr.gigaam import MODELS
+
+    settings = _settings(config)
+    settings.ensure_dirs()
+    entry = MODELS.get(variant)
+    if entry is None:
+        err.print(f"[red]Unknown variant {variant!r}.[/red] Available: {', '.join(MODELS)}")
+        raise typer.Exit(2)
+
+    directory, url = entry
+    target = settings.models_dir / directory
+    if (target / "tokens.txt").exists():
+        console.print(f"  [green]✓[/green] GigaAM {variant} (already present)")
+        return
+
+    archive = settings.models_dir / f"{directory}.tar.bz2"
+    if not _download(url, archive, f"GigaAM {variant}"):
+        raise typer.Exit(1)
+    console.print("  [cyan]…[/cyan] extracting")
+    with tarfile.open(archive) as tar:
+        tar.extractall(settings.models_dir, filter="data")
+    archive.unlink(missing_ok=True)
+
+    console.print(
+        "\n[green]Ready.[/green] Route Russian to it, leaving other languages alone:\n"
+        "\n  [asr.by_language.ru]\n"
+        '  backend = "gigaam"\n'
+        "\n[dim]Then compare it against what you use now:\n"
+        "  droid-assistant eval --language ru --backends "
+        "faster_whisper:large-v3-turbo,gigaam[/dim]"
+    )
+
+
 @models_app.command("list")
 def models_list(config: ConfigOption = None) -> None:
     """Show what is on disk."""

@@ -227,6 +227,37 @@ class OpenAIASRConfig(BaseModel):
         return self.price_per_minute_usd.get(model, self.fallback_price_per_minute_usd)
 
 
+class GigaAMConfig(BaseModel):
+    """GigaAM — Russian-specialised, run through sherpa-onnx (no PyTorch).
+
+    `v3-rnnt` is the default: the reason to select this backend over Whisper is
+    accuracy, and the transducer decoder is the more accurate of the two
+    published. Use a `-ctc` variant where speed matters more.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    model: str = "v3-rnnt"
+    num_threads: Annotated[int, Field(ge=1, le=32)] = 4
+    feature_dim: Annotated[int, Field(ge=1)] = 64
+    provider: Literal["cpu", "cuda", "coreml"] = "cpu"
+
+
+class LanguageASROverride(BaseModel):
+    """Which engine to use for one language (FR-ASR-1, FR-ASR-7).
+
+    Only the fields given are overridden; the rest come from `[asr]`. A session
+    pinned to a single language picks these up automatically, which is the
+    point: no model is best at every language, and the alternative is choosing
+    one compromise for all of them.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    backend: str | None = None
+    model: str | None = None
+
+
 #: Models whose response carries word-level timings (FR-ASR-5, FR-UI-8).
 OPENAI_TIMESTAMP_MODELS = frozenset({"whisper-1"})
 #: Models that return speaker labels of their own, which the pipeline prefers
@@ -252,6 +283,23 @@ class ASRConfig(BaseModel):
     # credential (FR-CFG-4). Only the selected `backend` is ever used.
     deepgram: DeepgramConfig = Field(default_factory=DeepgramConfig)
     openai: OpenAIASRConfig = Field(default_factory=OpenAIASRConfig)
+    gigaam: GigaAMConfig = Field(default_factory=GigaAMConfig)
+
+    # Per-language engine selection, applied when a session pins exactly one
+    # language. With several pinned there is nothing to route on, so the
+    # defaults above are used (see R13 — the model detects one language per
+    # window regardless).
+    #
+    #   [asr.by_language.ru]
+    #   backend = "gigaam"
+    by_language: dict[str, LanguageASROverride] = Field(default_factory=dict)
+
+    def for_language(self, language: str | None) -> tuple[str, str]:
+        """Resolve `(backend, model)` for a session's language."""
+        override = self.by_language.get((language or "").split("-")[0].lower())
+        if override is None:
+            return self.backend, self.model
+        return override.backend or self.backend, override.model or self.model
 
 
 class DiarizationConfig(BaseModel):
