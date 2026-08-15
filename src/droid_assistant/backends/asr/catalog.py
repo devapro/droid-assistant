@@ -28,6 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from ...config import Settings
+from .deepgram import NOVA_2_LANGUAGES, NOVA_3_LANGUAGES
 from .faster_whisper import WHISPER_LANGUAGES
 from .gigaam import MODELS as GIGAAM_MODELS
 
@@ -86,6 +87,7 @@ class ModelSpec:
 
 
 RU = frozenset({"ru"})
+SR = frozenset({"sr"})
 
 #: The models worth putting in front of an operator. Deliberately shorter than
 #: everything that would work: a list of forty entries is not a choice, it is a
@@ -121,6 +123,26 @@ CATALOG: tuple[ModelSpec, ...] = (
     ModelSpec("gigaam", "v3-ctc", RU, 215, note="Russian-only; faster than v3-rnnt, less accurate"),
     ModelSpec("gigaam", "v2-rnnt", RU, 220, note="Russian-only, previous generation"),
     ModelSpec("gigaam", "v2-ctc", RU, 215, note="Russian-only, previous generation"),
+    # Serbian has no equivalent of GigaAM — no specialised architecture, no
+    # maintained conversion, nobody's benchmark. What exists is community
+    # Whisper fine-tunes, and these two are the ones published in CTranslate2
+    # already, so they cost no conversion step. Their own cards report figures
+    # on read speech from their training distribution; that is a reason to
+    # measure them (R1), not a reason to trust them.
+    ModelSpec(
+        "faster_whisper",
+        "Sagicc/faster-whisper-large-v3-sr",
+        SR,
+        3090,
+        note="Serbian fine-tune of large-v3; already CTranslate2, so no conversion",
+    ),
+    ModelSpec(
+        "faster_whisper",
+        "Sagicc/faster-whisper-medium-sr",
+        SR,
+        1530,
+        note="Serbian fine-tune of medium, where large will not fit",
+    ),
     # Cloud entries carry no weights. They are here because routing one language
     # to a cloud backend is a legitimate answer — Serbian is the case this
     # project actually has — and the routing UI would be lying by omission.
@@ -129,8 +151,22 @@ CATALOG: tuple[ModelSpec, ...] = (
         "openai", "gpt-4o-transcribe-diarize", None, 0, local=False, note="OpenAI, speaker labels"
     ),
     ModelSpec("openai", "whisper-1", None, 0, local=False, note="OpenAI, word timestamps"),
-    ModelSpec("deepgram", "nova-2", None, 0, local=False, note="Deepgram, genuinely streaming"),
-    ModelSpec("deepgram", "nova-3", None, 0, local=False, note="Deepgram, genuinely streaming"),
+    ModelSpec(
+        "deepgram",
+        "nova-2",
+        NOVA_2_LANGUAGES,
+        0,
+        local=False,
+        note="Deepgram, genuinely streaming; no Serbian",
+    ),
+    ModelSpec(
+        "deepgram",
+        "nova-3",
+        NOVA_3_LANGUAGES,
+        0,
+        local=False,
+        note="Deepgram, genuinely streaming; the Deepgram model that has Serbian",
+    ),
 )
 
 _BY_ID = {spec.id: spec for spec in CATALOG}

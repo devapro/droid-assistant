@@ -146,10 +146,14 @@ whatever `asr.backend` says. `droid-assistant models suggest --language ru` also
 lists Whisper fine-tunes. Measure any of them against your own recordings rather
 than trusting anyone's benchmark — including the one above.
 
-Serbian is the largest open question, and Russian–English code-switching is
-likely to bite harder in daily use: speech recognition detects **one language
-per window**, so a sentence that mixes languages will come out in whichever one
-the model picks. Pin a single language per session where you can. Note that a
+Serbian is the largest open question — there is no equivalent of GigaAM for it,
+only community fine-tunes nobody has benchmarked on real conversation, and one
+cloud model that can do it in Live mode. See
+[Serbian](docs/CONFIGURATION.md#serbian) for the options and their caveats.
+
+Russian–English code-switching is likely to bite harder in daily use: speech
+recognition detects **one language per window**, so a sentence that mixes
+languages will come out in whichever one the model picks. Pin a single language per session where you can. Note that a
 language-specialised model usually makes code-switching *worse*, not better —
 it is tuned to expect one language.
 

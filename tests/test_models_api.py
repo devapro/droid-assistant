@@ -62,9 +62,26 @@ class TestListing:
     def test_language_coverage_is_explicit_for_narrow_models(self, client: Any) -> None:
         rows = {row["id"]: row for row in client.get("/api/models").json()["models"]}
         assert rows["gigaam:v3-rnnt"]["languages"] == ["ru"]
+        assert rows["faster_whisper:Sagicc/faster-whisper-large-v3-sr"]["languages"] == ["sr"]
         # `null` means unrestricted, which is how the client decides whether a
         # model may be offered for a given language at all.
-        assert rows["deepgram:nova-2"]["languages"] is None
+        assert rows["openai:whisper-1"]["languages"] is None
+
+    def test_the_serbian_deepgram_model_is_distinguished_from_the_older_one(
+        self, client: Any
+    ) -> None:
+        """The reason the Deepgram rows carry a language list at all.
+
+        nova-3 added Serbian; nova-2 has never had it. Reported as unrestricted,
+        both would be offered for an `sr` session and one of them would fail at
+        the provider, at the moment of recording.
+        """
+        rows = {row["id"]: row for row in client.get("/api/models").json()["models"]}
+        assert "sr" not in (rows["deepgram:nova-2"]["languages"] or [])
+        assert "sr" in (rows["deepgram:nova-3"]["languages"] or [])
+        # Both still cover the languages nova-2 always had.
+        for model in ("nova-2", "nova-3"):
+            assert {"en", "ru"} <= set(rows[f"deepgram:{model}"]["languages"] or [])
 
     def test_unrouted_language_reports_the_default(self, multi_client: Any) -> None:
         routing = multi_client.get("/api/models").json()["routing"]

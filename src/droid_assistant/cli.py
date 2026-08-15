@@ -223,6 +223,16 @@ SPECIALISED_MODELS = {
         ("bond005/whisper-large-v3-ru-podlodka", "Russian, tuned on spontaneous conversation"),
         ("dvislobokov/faster-whisper-large-v3-turbo-russian", "Russian, already CTranslate2"),
     ],
+    # Serbian is R1, the largest open question in the specification, and these
+    # are small community fine-tunes rather than a maintained project — closer
+    # to leads than to recommendations. They are listed because the alternative
+    # was printing "no suggestions recorded" for a language this project claims
+    # to support.
+    "sr": [
+        ("Sagicc/faster-whisper-large-v3-sr", "Serbian, already CTranslate2"),
+        ("Sagicc/faster-whisper-medium-sr", "Serbian, medium — where large will not fit"),
+        ("Sagicc/whisper-large-v3-turbo-sr-v2", "Serbian tune of turbo; convert it first"),
+    ],
 }
 
 

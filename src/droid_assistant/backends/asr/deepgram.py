@@ -24,6 +24,35 @@ from .base import ASRBackend, ASRStream, postprocess
 
 log = logging.getLogger(__name__)
 
+#: Deepgram publishes a language list *per model*, and the two generations
+#: differ in a way that matters to this project: **nova-3 recognises Serbian and
+#: nova-2 never has**. Declared here rather than left as "cloud, so presumably
+#: everything", because the catalogue's `None` means "no restriction" — and that
+#: is what would offer an `sr` session a model the provider then rejects, at the
+#: moment of recording. Deepgram being the only genuinely streaming backend,
+#: nova-3 is also what makes Live mode possible for Serbian at all.
+#:
+#: Primary subtags only: `ModelSpec.covers` compares the part before the hyphen,
+#: so the regional variants (`en-GB`, `pt-BR`, `zh-Hant`) are already covered.
+#: Deepgram's `multi` is omitted — it selects code-switching, and listing it here
+#: would count it as a thirty-fifth language in what the operator is shown.
+NOVA_2_LANGUAGES = frozenset(
+    {
+        "bg", "ca", "cs", "da", "de", "el", "en", "es", "et", "fi", "fr", "hi", "hu", "id",
+        "it", "ja", "ko", "lt", "lv", "ms", "nl", "no", "pl", "pt", "ro", "ru", "sk", "sv",
+        "th", "tr", "uk", "vi", "zh",
+    }
+)  # fmt: skip
+
+#: Everything nova-2 has, plus the languages the newer model added — Serbian and
+#: its neighbours (`bs`, `hr`, `mk`, `sl`) among them.
+NOVA_3_LANGUAGES = NOVA_2_LANGUAGES | frozenset(
+    {
+        "ar", "be", "bn", "bs", "fa", "gu", "he", "hr", "hy", "kn", "mk", "mr", "ne", "pa",
+        "sl", "sr", "ta", "te", "tl", "ur",
+    }
+)  # fmt: skip
+
 
 class DeepgramStream:
     """One live recognition socket.

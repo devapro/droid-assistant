@@ -291,6 +291,39 @@ Licence: the upstream repository is MIT and permits commercial use. Some
 third-party pages describe the weights as non-commercial; if that matters to
 you, check the LICENSE in the model directory before relying on it.
 
+### Serbian
+
+Serbian has no GigaAM. There is no architecture trained for it, no maintained
+conversion, and no benchmark anyone has run on conversational speech — it is
+[R1](SRS.md#10-risks-and-open-questions), the largest open question in the
+specification, and it is still open because `eval/corpus/sr/` is empty.
+
+What exists is community Whisper fine-tunes. Two are published in CTranslate2
+already, so they cost no conversion step:
+
+```toml
+[asr.by_language.sr]
+model = "Sagicc/faster-whisper-large-v3-sr"   # or …-medium-sr where large will not fit
+```
+
+`droid-assistant models suggest --language sr` lists these and one more that
+needs `models convert` first. Their own cards report low error on read speech
+drawn from their training distribution, which is a reason to measure them, not
+a reason to believe them. **The baseline to beat is stock `large-v3-turbo`, and
+`droid-assistant eval` is how you find out.** Ten minutes of your own Serbian,
+recorded through the browser client, settles this better than any of the above.
+
+The cloud answer is real here rather than a fallback: `deepgram:nova-3` is the
+only genuinely streaming backend that recognises Serbian, which makes it the
+only way to run Serbian in **Live** mode.
+
+One thing already handled: whichever script a fine-tune emits does not matter,
+because output is normalised to `asr.serbian_script` (FR-ASR-10).
+
+Do not substitute a Croatian model. Acoustically it is nearly the same language,
+but the ijekavian/ekavian split means it will write *mlijeko* where your speaker
+said *mleko*, systematically, and word error will not tell you why.
+
 ### `[asr.deepgram]`
 
 Used when `asr.backend = "deepgram"`.
@@ -298,7 +331,7 @@ Used when `asr.backend = "deepgram"`.
 | Field | Default | Notes |
 |---|---|---|
 | `api_key_env` | `"DEEPGRAM_API_KEY"` | Variable *name*, never a key |
-| `model` | `"nova-2"` | |
+| `model` | `"nova-2"` | **Serbian needs `nova-3`** — nova-2 has never supported it. The model picker knows this and will not offer nova-2 for an `sr` session |
 | `endpoint` | Deepgram's | Point it at another Deepgram-shaped provider without a code change |
 | `price_per_minute_usd` | `0.0043` | Reporting only. Check it against your own contract — list and negotiated pricing are rarely the same |
 
