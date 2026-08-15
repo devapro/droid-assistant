@@ -74,6 +74,15 @@ class PluginStore(Protocol):
 
     async def session_metadata(self, session_id: str) -> dict[str, Any]: ...
 
+    async def artifacts(self, session_id: str, *, kind: str | None = None) -> list[dict[str, Any]]:
+        """The current artifacts for this session, newest first.
+
+        A plugin reading its own last output is what makes a scoped run able to
+        *add* to a list rather than replace it — see `Context.utterance_ids`.
+        It is a read like any other: the transcript stays immutable to plugins.
+        """
+        ...
+
 
 class LLM(Protocol):
     async def complete(
@@ -101,14 +110,67 @@ class Context:
     event: Event
     payload: dict[str, Any]
 
+    #: The part of the session this run covers, or None for all of it. Set when
+    #: the operator asked for one message rather than the whole conversation —
+    #: "make an action item out of *this*". A plugin honours it by reading
+    #: `ctx.utterances()` instead of `ctx.store.utterances()`; one that reaches
+    #: past it produces a whole-session answer to a question about one line.
+    utterance_ids: tuple[str, ...] | None = None
+
+    #: Why this run produced nothing, when it chose not to. Read back by the
+    #: caller so "nothing happened" can be explained instead of merely reported.
+    declined: str | None = None
+
     #: Set by the host; a plugin calls this to emit at any point, not only from
     #: `on_session_end` (SRS §5.5).
     _emit: Any = None
+
+    def decline(self, reason: str) -> None:
+        """Say why this run is producing nothing.
+
+        Returning `None` is a complete answer to the host and a useless one to
+        whoever pressed the button: "the plugin produced no artifact" tells them
+        nothing they can act on. A reason does.
+        """
+        self.declined = reason
+
+    @property
+    def requested(self) -> bool:
+        """True when a person asked for this run, rather than an event causing it.
+
+        Worth checking before declining on a heuristic. A guard that skips work
+        nobody asked for is right; the same guard applied to an explicit request
+        is a button that does nothing.
+        """
+        return self.payload.get("reason") == "manual"
 
     async def emit_artifact(self, artifact: Artifact) -> None:
         if self._emit is None:
             raise RuntimeError("emit_artifact is unavailable outside a plugin handler")
         await self._emit(artifact)
+
+    async def utterances(self) -> list[Utterance]:
+        """The utterances this run covers, in order.
+
+        The whole session unless it was scoped to part of one. Preferred over
+        `store.utterances` for exactly that reason.
+        """
+        utterances = await self.store.utterances(self.session_id)
+        if self.utterance_ids is None:
+            return utterances
+        wanted = set(self.utterance_ids)
+        return [utterance for utterance in utterances if utterance.id in wanted]
+
+    async def previous(self, kind: str) -> dict[str, Any] | None:
+        """This plugin's current artifact of one kind, if it has produced one.
+
+        What a scoped run adds to. None means there is nothing to add to yet,
+        which a plugin should treat as "start the list", not as an error.
+        """
+        for artifact in await self.store.artifacts(self.session_id, kind=kind):
+            if artifact.get("current", True):
+                return artifact
+        return None
 
 
 class EmptyConfig(BaseModel):
@@ -133,6 +195,12 @@ class Plugin:
     #: when local-only is on and no local LLM is configured, instead of letting
     #: every invocation fail (FR-CFG-5).
     requires_llm: ClassVar[bool] = False
+    #: Never dispatched by an event; runs only when somebody asks for it. For
+    #: anything whose cost is a whole-transcript LLM call, spending that on every
+    #: session — including the ones nobody will read again — is a decision the
+    #: operator should make per recording, and a button they press is how they
+    #: make it. `subscribes` still says which handler an on-demand run reaches.
+    on_demand: ClassVar[bool] = False
 
     async def on_session_start(self, ctx: Context) -> Artifact | None:
         return None

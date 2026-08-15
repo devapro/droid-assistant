@@ -11,15 +11,35 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { api, type Artifact, type Session, type Speaker, type Utterance } from '../api/client'
+import {
+  api,
+  type Artifact,
+  type PluginInfo,
+  type Session,
+  type Speaker,
+  type Utterance,
+} from '../api/client'
 import { EventStream } from '../transport/events'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { CostBreakdown } from '../components/CostBreakdown'
+import { Markdown } from '../components/Markdown'
 import { Transcript, type TranscriptView } from '../components/Transcript'
 import { Button, EmptyState, Pill, clock, duration, relativeDate } from '../components/primitives'
 import { t } from '../i18n'
+import { useActionItems } from '../state/actionItems'
 
 type Tab = 'transcript' | string
+
+/**
+ * Whether an artifact is meant for a person to read.
+ *
+ * `action_items` emits its list twice — Markdown to read, JSON for anything
+ * downstream — and both used to claim a tab, so the reader was offered
+ * "Action Items Json" beside "Action Items". The JSON is still exported and
+ * still on the API; it just is not a page in a reading view.
+ */
+const readable = (artifact: Artifact) => !artifact.mime.includes('json')
+
 
 export function SessionDetail({
   sessionId,
@@ -37,9 +57,11 @@ export function SessionDetail({
   const [playing, setPlaying] = useState(false)
   const [positionMs, setPositionMs] = useState(0)
   const [rerunning, setRerunning] = useState<string | null>(null)
+  const [plugins, setPlugins] = useState<PluginInfo[]>([])
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const audio = useRef<HTMLAudioElement>(null)
+  const actionItems = useActionItems(sessionId)
 
   const load = useCallback(async () => {
     try {
@@ -52,6 +74,16 @@ export function SessionDetail({
   useEffect(() => {
     void load()
   }, [load])
+
+  // Which plugins could be run from here. A control that posts to a disabled
+  // plugin is worse than no control: it fails at the moment someone expected
+  // something to happen, with a reason that belongs in Settings.
+  useEffect(() => {
+    api
+      .plugins()
+      .then((body) => setPlugins(body.plugins))
+      .catch(() => setPlugins([]))
+  }, [])
 
   // A session still recording, or still running plugins, keeps updating. This
   // is the same stream the Record view uses (FR-SES-5).
@@ -101,14 +133,30 @@ export function SessionDetail({
 
   const rerun = async (pluginName: string) => {
     setRerunning(pluginName)
+    setError(null)
     try {
-      await api.runPlugin(sessionId, pluginName)
+      const result = await api.runPlugin(sessionId, pluginName)
       await load()
+      if (result.artifact) {
+        // Land on what was just produced. Without this the view stays on the
+        // plugin's "generate" tab — which no longer exists in the tab strip,
+        // because the plugin is no longer idle — so the button sits there
+        // apparently having done nothing.
+        setTab(result.artifact.kind)
+      } else {
+        setError(result.note ?? strings.session.producedNothing(pluginName))
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : strings.errors.generic)
     } finally {
       setRerunning(null)
     }
+  }
+
+  const extractActionItem = async (utterance: Utterance) => {
+    await actionItems.extract(utterance)
+    // The list is what the artifact tabs are built from, so it has to come back.
+    await load()
   }
 
   if (error && !session) {
@@ -124,10 +172,26 @@ export function SessionDetail({
   if (!session) return <p className="text-fg-dim p-6 text-sm">{strings.common.loading}</p>
 
   const current = (session.artifacts ?? []).filter((a) => a.current)
+  const runnable = plugins.filter((plugin) => plugin.enabled && plugin.available)
+  // A plugin that has produced nothing gets a tab anyway, so there is somewhere
+  // to press "generate". Keyed by plugin rather than by artifact kind, because
+  // a plugin does not declare in advance what kinds it emits — and judged on
+  // *all* its artifacts, so one that only emits JSON is not called idle.
+  const idle = runnable.filter(
+    (plugin) => !current.some((artifact) => artifact.plugin_name === plugin.name),
+  )
   const tabs: { id: Tab; label: string }[] = [
     { id: 'transcript', label: strings.session.transcript },
-    ...current.map((a) => ({ id: a.kind, label: a.kind.replace(/_/g, ' ') })),
+    ...current.filter(readable).map((a) => ({ id: a.kind, label: a.kind.replace(/_/g, ' ') })),
+    ...idle.map((plugin) => ({ id: `plugin:${plugin.name}`, label: plugin.name.replace(/_/g, ' ') })),
   ]
+  // Only while that plugin really is idle. Once it has produced something the
+  // tab is gone from the strip, and leaving the panel behind would keep showing
+  // a "generate" button for work that is already done.
+  const named = tab.startsWith('plugin:') ? tab.slice('plugin:'.length) : null
+  const idlePlugin = idle.some((plugin) => plugin.name === named) ? named : null
+  const shown = idlePlugin ?? (tabs.some((entry) => entry.id === tab) ? tab : 'transcript')
+  const canExtract = actionItems.available
 
   return (
     <div className="flex h-full flex-col">
@@ -200,7 +264,7 @@ export function SessionDetail({
             {entry.label}
           </button>
         ))}
-        {tab === 'transcript' && session.target_language && (
+        {shown === 'transcript' && session.target_language && (
           <select
             value={view}
             onChange={(event) => setView(event.target.value as TranscriptView)}
@@ -214,11 +278,28 @@ export function SessionDetail({
         )}
       </nav>
 
-      {session.artifacts_stale && tab !== 'transcript' && (
+      {session.artifacts_stale && shown !== 'transcript' && (
         <p className="bg-warn/15 text-warn px-4 py-2 text-sm">{strings.session.stale}</p>
       )}
 
-      {tab === 'transcript' ? (
+      {/* Errors were only rendered when the session itself failed to load, so a
+          plugin run that failed after that reported nothing at all — the button
+          simply stopped spinning. Dismissable, because it is not fatal. */}
+      {(error || actionItems.error) && (
+        <button
+          type="button"
+          onClick={() => setError(null)}
+          className="bg-warn/15 text-warn w-full px-4 py-2 text-left text-sm"
+        >
+          ⚠ {error ?? actionItems.error} <span className="opacity-60">— dismiss</span>
+        </button>
+      )}
+
+      {actionItems.notice && shown === 'transcript' && (
+        <p className="bg-accent/15 text-accent px-4 py-2 text-sm">{actionItems.notice}</p>
+      )}
+
+      {shown === 'transcript' ? (
         <Transcript
           utterances={session.utterances ?? []}
           speakers={speakers}
@@ -227,13 +308,23 @@ export function SessionDetail({
           onSelect={seekTo}
           onEdit={(utterance, text) => void edit(utterance, text)}
           onRenameSpeaker={(speaker) => void rename(speaker)}
+          onActionItem={canExtract ? (utterance) => void extractActionItem(utterance) : undefined}
+          actionItemBusyId={actionItems.busyId}
+          actionItemSources={actionItems.sources}
           emptyTitle="This session has no transcript."
           emptyAction={session.state === 'processing' ? 'Still processing…' : undefined}
         />
+      ) : idlePlugin ? (
+        <GeneratePanel
+          plugin={idlePlugin}
+          onDemand={Boolean(plugins.find((p) => p.name === idlePlugin)?.on_demand)}
+          running={rerunning === idlePlugin}
+          onGenerate={() => void rerun(idlePlugin)}
+        />
       ) : (
         <ArtifactPanel
-          artifacts={current.filter((a) => a.kind === tab)}
-          versions={(session.artifacts ?? []).filter((a) => a.kind === tab)}
+          artifacts={current.filter((a) => a.kind === shown)}
+          versions={(session.artifacts ?? []).filter((a) => a.kind === shown)}
           rerunning={rerunning}
           onRerun={(plugin) => void rerun(plugin)}
         />
@@ -295,6 +386,40 @@ export function SessionDetail({
   )
 }
 
+/**
+ * The tab for a plugin that has not run on this session.
+ *
+ * Without it, a recording whose plugins were disabled at the time — or that
+ * ended before one was installed — offers no way to produce anything at all,
+ * because the tabs were built from artifacts that already existed. For an
+ * on-demand plugin it is not a gap to be explained but the normal state, and
+ * the wording says so rather than implying something failed.
+ */
+function GeneratePanel({
+  plugin,
+  onDemand,
+  running,
+  onGenerate,
+}: {
+  plugin: string
+  onDemand: boolean
+  running: boolean
+  onGenerate: () => void
+}) {
+  const strings = t()
+  const label = plugin.replace(/_/g, ' ')
+  return (
+    <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
+      <p className="text-fg-dim max-w-sm text-sm">
+        {onDemand ? strings.session.onDemandHint(label) : strings.session.generateHint(label)}
+      </p>
+      <Button variant="default" onClick={onGenerate} disabled={running}>
+        {running ? strings.session.generating : strings.session.generate(label)}
+      </Button>
+    </div>
+  )
+}
+
 function ArtifactPanel({
   artifacts,
   versions,
@@ -351,82 +476,4 @@ function ArtifactPanel({
       <Markdown source={artifact.content} />
     </div>
   )
-}
-
-/**
- * A small Markdown renderer for artifact content.
- *
- * A full parser would be the single largest thing in the bundle (NFR-RES-6), and
- * artifacts come from prompts that ask for headings, lists, and emphasis. Text
- * is never injected as HTML, so a malformed artifact renders as plain text
- * rather than becoming a script (NFR-SEC-9).
- */
-function Markdown({ source }: { source: string }) {
-  const lines = source.split('\n')
-  return (
-    <div className="max-w-prose text-[15px] leading-relaxed">
-      {lines.map((line, index) => {
-        if (/^#{1,6}\s/.test(line)) {
-          const level = line.match(/^#+/)?.[0].length ?? 1
-          const text = line.replace(/^#+\s*/, '')
-          const size = level <= 2 ? 'text-lg font-semibold' : 'text-base font-semibold'
-          return (
-            <p key={index} className={`mt-4 mb-1 ${size}`}>
-              {inline(text)}
-            </p>
-          )
-        }
-        if (/^\s*[-*]\s*\[[ x]\]\s/.test(line)) {
-          const done = /\[x\]/i.test(line)
-          return (
-            <p key={index} className="flex gap-2 py-0.5">
-              <span className={done ? 'text-good' : 'text-fg-dim'}>{done ? '☑' : '☐'}</span>
-              <span>{inline(line.replace(/^\s*[-*]\s*\[[ x]\]\s*/i, ''))}</span>
-            </p>
-          )
-        }
-        if (/^\s*[-*]\s/.test(line)) {
-          return (
-            <p key={index} className="flex gap-2 py-0.5 pl-2">
-              <span className="text-fg-dim">•</span>
-              <span>{inline(line.replace(/^\s*[-*]\s*/, ''))}</span>
-            </p>
-          )
-        }
-        if (/^\s*>/.test(line)) {
-          return (
-            <p key={index} className="border-line text-fg-dim my-1 border-l-2 pl-3 text-sm italic">
-              {inline(line.replace(/^\s*>\s?/, ''))}
-            </p>
-          )
-        }
-        if (!line.trim()) return <div key={index} className="h-2" />
-        return (
-          <p key={index} className="py-0.5">
-            {inline(line)}
-          </p>
-        )
-      })}
-    </div>
-  )
-}
-
-function inline(text: string): React.ReactNode {
-  const parts = text.split(/(\*\*[^*]+\*\*|_[^_]+_|`[^`]+`)/g)
-  return parts.map((part, index) => {
-    if (part.startsWith('**') && part.endsWith('**')) {
-      return <strong key={index}>{part.slice(2, -2)}</strong>
-    }
-    if (part.startsWith('_') && part.endsWith('_') && part.length > 2) {
-      return <em key={index}>{part.slice(1, -1)}</em>
-    }
-    if (part.startsWith('`') && part.endsWith('`') && part.length > 2) {
-      return (
-        <code key={index} className="bg-surface-2 rounded px-1 py-0.5 font-mono text-[13px]">
-          {part.slice(1, -1)}
-        </code>
-      )
-    }
-    return <span key={index}>{part}</span>
-  })
 }

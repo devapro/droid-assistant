@@ -4,6 +4,12 @@ Also the worked example the plugin documentation points at, so it is written the
 way a third-party plugin should be: config as a pydantic model, one handler, an
 Artifact returned, no credential handling, and no assumption that the LLM is
 available.
+
+**On demand, not on every session.** Summarising costs a whole-transcript LLM
+call, and most recordings are never read a second time. Spending that
+automatically bills for summaries nobody asked for and — where the credential is
+a cloud one — sends every conversation to a provider as a matter of course. So
+the Summary tab offers a button instead, and the decision is made per recording.
 """
 
 from __future__ import annotations
@@ -56,16 +62,27 @@ class SummaryPlugin(Plugin):
     name = "summary"
     version = "1.0.0"
     api_version = 1
-    description = "Summarises the session once it ends"
+    description = "Summarises a conversation, when you ask for one"
     config_schema = SummaryConfig
+    #: Which handler an on-demand run reaches. It is never dispatched, because…
     subscribes = {Event.SESSION_END}
     requires_llm = True
+    on_demand = True  # …see the module docstring
 
     async def on_session_end(self, ctx: Context) -> Artifact | None:
         config: SummaryConfig = ctx.config
-        utterances = await ctx.store.utterances(ctx.session_id)
-        if len(utterances) < config.min_utterances:
-            ctx.logger.info("session too short to summarise", extra={"utterances": len(utterances)})
+        utterances = await ctx.utterances()
+        if not utterances:
+            ctx.decline("There is nothing to summarise — this recording has no transcript.")
+            return None
+        # The floor exists to stop a voice note being summarised on the way past.
+        # Somebody who pressed the button has already answered that question, and
+        # refusing them is a control that does nothing for no stated reason.
+        if len(utterances) < config.min_utterances and not ctx.requested:
+            ctx.decline(
+                f"Only {len(utterances)} lines — shorter than the {config.min_utterances} "
+                "this plugin summarises automatically."
+            )
             return None
 
         speakers = {s.id: s for s in await ctx.store.speakers(ctx.session_id)}

@@ -24,6 +24,10 @@ import { t } from '../i18n'
  */
 const PAGE_SIZE = 50
 
+/** The plugin behind the per-row action. Named once so the check for whether to
+ *  offer it and the request that runs it cannot drift apart. */
+const SUMMARY = 'summary'
+
 export function History({ onOpen }: { onOpen: (sessionId: string, utteranceId?: string) => void }) {
   const strings = t()
   const [sessions, setSessions] = useState<Session[]>([])
@@ -44,7 +48,21 @@ export function History({ onOpen }: { onOpen: (sessionId: string, utteranceId?: 
   const [renamingId, setRenamingId] = useState<string | null>(null)
   const [pendingDelete, setPendingDelete] = useState<Session | null>(null)
   const [busy, setBusy] = useState(false)
+  const [summarising, setSummarising] = useState<string | null>(null)
+  const [canSummarise, setCanSummarise] = useState(false)
   const [error, setError] = useState<{ message: string; remedy?: string } | null>(null)
+
+  // Offered only where pressing it would do something: the plugin has to be
+  // enabled and to have an LLM it can reach. Asked once for the whole list
+  // rather than per row.
+  useEffect(() => {
+    api
+      .plugins()
+      .then((body) =>
+        setCanSummarise(body.plugins.some((p) => p.name === SUMMARY && p.enabled && p.available)),
+      )
+      .catch(() => setCanSummarise(false))
+  }, [])
 
   const fail = (thrown: unknown) => {
     const problem = thrown instanceof ApiError ? thrown : null
@@ -74,6 +92,31 @@ export function History({ onOpen }: { onOpen: (sessionId: string, utteranceId?: 
         current.map((s) => (s.id === session.id ? { ...s, title: previous } : s)),
       )
       fail(thrown)
+    }
+  }
+
+  const summarise = async (session: Session) => {
+    setSummarising(session.id)
+    try {
+      setError(null)
+      await api.runPlugin(session.id, SUMMARY)
+      // Update in place, like rename and delete: refetching would throw away
+      // the filters and scroll position. The kind comes from the artifact the
+      // run returned rather than being assumed.
+      const artifact = (await api.artifacts(session.id)).artifacts.find((a) => a.current)
+      if (artifact) {
+        setSessions((current) =>
+          current.map((s) =>
+            s.id === session.id
+              ? { ...s, artifact_kinds: [...new Set([...(s.artifact_kinds ?? []), artifact.kind])] }
+              : s,
+          ),
+        )
+      }
+    } catch (thrown) {
+      fail(thrown)
+    } finally {
+      setSummarising(null)
     }
   }
 
@@ -289,6 +332,16 @@ export function History({ onOpen }: { onOpen: (sessionId: string, utteranceId?: 
                 onCancelRename={() => setRenamingId(null)}
                 onRename={(title) => void rename(session, title)}
                 onDelete={() => setPendingDelete(session)}
+                // Not offered while the session is still recording — there is
+                // no whole conversation to summarise yet — nor where one
+                // already exists, since the pill says so and re-running belongs
+                // in the session view next to the text it would replace.
+                onSummarise={
+                  canSummarise && !session.live && !session.artifact_kinds?.includes(SUMMARY)
+                    ? () => void summarise(session)
+                    : undefined
+                }
+                summarising={summarising === session.id}
               />
             ))}
             {hasMore && (
@@ -340,6 +393,8 @@ function SessionRow({
   onCancelRename,
   onRename,
   onDelete,
+  onSummarise,
+  summarising,
 }: {
   session: Session
   editing: boolean
@@ -348,10 +403,14 @@ function SessionRow({
   onCancelRename: () => void
   onRename: (title: string) => void
   onDelete: () => void
+  /** Absent when the summary plugin is disabled, or the session already has one. */
+  onSummarise?: () => void
+  summarising: boolean
 }) {
   const strings = t()
   const name = session.title ?? strings.history.untitled
   const [draft, setDraft] = useState(name)
+  const readableKinds = (session.artifact_kinds ?? []).filter((kind) => !kind.endsWith('_json'))
 
   useEffect(() => {
     if (editing) setDraft(session.title ?? '')
@@ -413,8 +472,11 @@ function SessionRow({
             {(session.source_languages[0] ?? 'auto').toUpperCase()}→
             {session.target_language.toUpperCase()}
           </Pill>
-          {session.artifact_kinds?.length ? (
-            session.artifact_kinds.map((kind) => (
+          {/* `action_items_json` is the machine-readable half of one artifact,
+              and listing it beside `action_items` told the reader they had two
+              different things. */}
+          {readableKinds.length ? (
+            readableKinds.map((kind) => (
               <Pill key={kind} tone="accent">
                 {kind.replace('_', ' ')}
               </Pill>
@@ -435,6 +497,17 @@ function SessionRow({
           phone, and a control you cannot discover is not a control. Delete is
           safe to expose because it is confirmed by name. */}
       <div className="flex shrink-0 items-center gap-0.5 py-3 pr-2">
+        {onSummarise && (
+          <button
+            type="button"
+            onClick={onSummarise}
+            disabled={summarising}
+            title={strings.history.summarise}
+            className="text-fg-dim hover:bg-surface-3 hover:text-fg rounded-lg px-2.5 py-2 text-xs whitespace-nowrap disabled:opacity-40"
+          >
+            {summarising ? strings.history.summarising : strings.history.summarise}
+          </button>
+        )}
         <button
           type="button"
           onClick={onStartRename}

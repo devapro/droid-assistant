@@ -8,12 +8,13 @@ UI reports the failure.
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 
 import pytest
 from pydantic import BaseModel
 
-from droid_assistant.domain import Artifact
+from droid_assistant.domain import Artifact, Utterance
 from droid_assistant.events import EventBus, EventType
 from droid_assistant.plugins.api import Context, Event, Plugin, format_transcript
 from droid_assistant.plugins.host import PluginHost, discover
@@ -65,18 +66,45 @@ class WrongVersionPlugin(Plugin):
     subscribes = {Event.SESSION_END}
 
 
+def an_utterance(utterance_id: str, text: str, seq: int = 0) -> Utterance:
+    return Utterance(
+        id=utterance_id,
+        session_id="sess_1",
+        seq=seq,
+        start_ms=seq * 1_000,
+        end_ms=seq * 1_000 + 900,
+        text=text,
+    )
+
+
 class Store:
+    """A session of three lines, and whatever artifacts a test has planted."""
+
+    LINES = (
+        an_utterance("utt_1", "давайте начнем", 0),
+        an_utterance("utt_2", "я пришлю цифры до пятницы", 1),
+        an_utterance("utt_3", "я забронирую переговорку", 2),
+    )
+
+    def __init__(self, artifacts: list[dict] | None = None) -> None:
+        self._artifacts = artifacts or []
+
     async def transcript(self, session_id: str, **kwargs: object) -> str:
         return "Anna: hello\nMarko: hi"
 
     async def utterances(self, session_id: str) -> list:
-        return []
+        return list(self.LINES)
 
     async def speakers(self, session_id: str) -> list:
         return []
 
     async def session_metadata(self, session_id: str) -> dict:
         return {"title": "test"}
+
+    async def artifacts(self, session_id: str, *, kind: str | None = None) -> list[dict]:
+        if kind is None:
+            return list(self._artifacts)
+        return [a for a in self._artifacts if a["kind"] == kind]
 
 
 class FakeLLM:
@@ -108,18 +136,21 @@ def harness():
             "mime": artifact.mime,
             "version": len(artifacts),
             "content": artifact.content,
+            # The real sink stores and returns this, and the UI reads it to say
+            # what a run actually did.
+            "metadata": artifact.metadata,
         }
 
     async def state_sink(name: str, **kwargs: object) -> None:
         errors.append({"plugin": name, **kwargs})
 
-    def build(plugins, llm=None):
+    def build(plugins, llm=None, store_artifacts=None):
         from droid_assistant.plugins.host import LoadedPlugin
 
         host = PluginHost(
             [LoadedPlugin(instance=p, source="test") for p in plugins],
             bus=bus,
-            store_factory=Store,
+            store_factory=lambda: Store(store_artifacts),
             llm_factory=lambda _session_id=None: llm or FakeLLM(),
             artifact_sink=sink,
             state_sink=state_sink,
@@ -128,6 +159,12 @@ def harness():
         return host
 
     return {"build": build, "bus": bus, "artifacts": artifacts, "errors": errors}
+
+
+async def ran(host, *args, **kwargs):
+    """`run_now` returns `(artifact, why-not)`. Most tests want only the first."""
+    artifact, _reason = await host.run_now(*args, **kwargs)
+    return artifact
 
 
 # --- tests ------------------------------------------------------------------
@@ -384,3 +421,357 @@ class TestTranscriptFormatting:
             [Utterance(id="u", session_id="x", seq=0, start_ms=0, end_ms=1000, text="hello")], {}
         )
         assert "Unknown: hello" in rendered
+
+
+# --- running over part of a session ------------------------------------------
+
+
+class RecordingPlugin(Plugin):
+    """Reports what it was given to look at, so scoping can be asserted."""
+
+    name = "recorder"
+    version = "1.0.0"
+    api_version = 1
+    subscribes = {Event.SESSION_END}
+
+    async def on_session_end(self, ctx: Context) -> Artifact:
+        seen = await ctx.utterances()
+        return Artifact(kind="seen", content="|".join(u.id for u in seen))
+
+
+class TestScopedRuns:
+    """ "Make an action item out of *this*" is one plugin run over one line.
+
+    The event stays `session.end` — the handler that summarises is the one that
+    should answer — and what changes is how much of the session it can see.
+    """
+
+    async def test_an_unscoped_run_sees_the_whole_session(self, harness) -> None:
+        host = harness["build"]([RecordingPlugin()])
+        artifact = await ran(host, "recorder", "sess_1")
+        assert artifact["content"] == "utt_1|utt_2|utt_3"
+
+    async def test_a_scoped_run_sees_only_the_lines_it_names(self, harness) -> None:
+        host = harness["build"]([RecordingPlugin()])
+        artifact = await ran(host, "recorder", "sess_1", utterance_ids=["utt_2"])
+        assert artifact["content"] == "utt_2"
+
+    async def test_scope_survives_as_the_order_the_session_has(self, harness) -> None:
+        """Ids arrive in whatever order the caller listed them; the transcript
+        handed to a model must still read forwards."""
+        host = harness["build"]([RecordingPlugin()])
+        artifact = await ran(host, "recorder", "sess_1", utterance_ids=["utt_3", "utt_1"])
+        assert artifact["content"] == "utt_1|utt_3"
+
+    async def test_an_unknown_id_scopes_to_nothing_rather_than_everything(self, harness) -> None:
+        """The route rejects these before they get here. If one ever did, the
+        failure has to be visibly empty rather than a whole-session answer to a
+        question about one line."""
+        host = harness["build"]([RecordingPlugin()])
+        artifact = await ran(host, "recorder", "sess_1", utterance_ids=["utt_nope"])
+        assert artifact["content"] == ""
+
+
+class ItemsLLM:
+    """Returns one action item, named after the line it was given."""
+
+    available = True
+
+    def __init__(self, text: str = "Book the room") -> None:
+        self.text = text
+        self.prompts: list[str] = []
+        self.systems: list[str] = []
+
+    async def complete(self, prompt: str, **kwargs: object) -> str:
+        self.prompts.append(prompt)
+        self.systems.append(str(kwargs.get("system") or ""))
+        return json.dumps([{"text": self.text, "owner": None, "due": None, "quote": "q"}])
+
+
+def planted(items: list[dict]) -> list[dict]:
+    return [
+        {
+            "kind": "action_items_json",
+            "current": True,
+            "content": json.dumps(items),
+        }
+    ]
+
+
+class TestActionItemsFromOneMessage:
+    def plugin(self):
+        from droid_assistant.plugins.builtin.action_items import ActionItemsPlugin
+
+        return ActionItemsPlugin()
+
+    async def test_a_scoped_run_adds_to_the_list_rather_than_replacing_it(self, harness) -> None:
+        existing = [{"text": "Send the Q3 numbers", "owner": "Anna", "due": None, "quote": "q"}]
+        host = harness["build"](
+            [self.plugin()], llm=ItemsLLM("Book the room"), store_artifacts=planted(existing)
+        )
+        artifact = await ran(host, "action_items", "sess_1", utterance_ids=["utt_3"])
+
+        assert "Send the Q3 numbers" in artifact["content"]
+        assert "Book the room" in artifact["content"]
+
+    async def test_the_same_line_twice_does_not_double_the_list(self, harness) -> None:
+        """Pressing the button twice on one message is an ordinary accident.
+
+        Nothing new means nothing filed: a second version identical to the first
+        is noise in the history and, worse, tells whoever pressed the button
+        that something happened.
+        """
+        existing = [
+            {"text": "Book the room", "owner": None, "due": None, "quote": "q", "source": "utt_3"}
+        ]
+        host = harness["build"](
+            [self.plugin()], llm=ItemsLLM("book the ROOM"), store_artifacts=planted(existing)
+        )
+        assert await ran(host, "action_items", "sess_1", utterance_ids=["utt_3"]) is None
+        assert harness["artifacts"] == []
+
+    async def test_what_was_added_is_reported_separately_from_the_total(self, harness) -> None:
+        """`count` alone cannot tell "found one" from "found none and there were
+        none before" — which is exactly the confusion the UI has to avoid."""
+        existing = [{"text": "Send the Q3 numbers", "owner": None, "due": None, "quote": "q"}]
+        host = harness["build"](
+            [self.plugin()], llm=ItemsLLM("Book the room"), store_artifacts=planted(existing)
+        )
+        await ran(host, "action_items", "sess_1", utterance_ids=["utt_3"])
+        markdown = [a for _sid, _n, a in harness["artifacts"] if a.kind == "action_items"][-1]
+        assert markdown.metadata == {"count": 2, "added": 1, "linked": 0}
+
+    async def test_a_list_kept_only_as_markdown_is_still_added_to(self, harness) -> None:
+        """With `also_emit_json` off there is no lossless record, and reading
+        nothing back meant replacing a list the operator can see on screen with
+        one built from a single line. So the rendered list is read back."""
+        rendered = [
+            {
+                "kind": "action_items",
+                "current": True,
+                "content": (
+                    "## Action items\n\n- [ ] Send the Q3 numbers — **Anna** · _by Friday_\n  > q"
+                ),
+            }
+        ]
+        host = harness["build"](
+            [self.plugin()], llm=ItemsLLM("Book the room"), store_artifacts=rendered
+        )
+        artifact = await ran(host, "action_items", "sess_1", utterance_ids=["utt_3"])
+        assert "Send the Q3 numbers" in artifact["content"]
+        assert "**Anna**" in artifact["content"]
+        assert "_by Friday_" in artifact["content"]
+        assert "Book the room" in artifact["content"]
+
+    async def test_a_whole_session_run_still_replaces(self, harness) -> None:
+        """Re-running after a transcript edit must not accumulate the answers of
+        every previous run (FR-SES-9)."""
+        existing = [{"text": "Send the Q3 numbers", "owner": None, "due": None, "quote": "q"}]
+        host = harness["build"](
+            [self.plugin()], llm=ItemsLLM("Book the room"), store_artifacts=planted(existing)
+        )
+        artifact = await ran(host, "action_items", "sess_1")
+        assert "Send the Q3 numbers" not in artifact["content"]
+
+    async def test_a_picked_line_is_not_re_judged(self, harness) -> None:
+        """The reason the button looked like it did nothing.
+
+        The session-wide rules are written against an unattended pass over a
+        whole transcript, where the failure mode is inventing commitments. Asked
+        of a line somebody deliberately picked, they answer the wrong question —
+        they weigh whether it counts, decide it is only a remark, and return
+        nothing. So a scoped run is given its own instructions.
+        """
+        llm = ItemsLLM()
+        host = harness["build"]([self.plugin()], llm=llm, store_artifacts=[])
+
+        await ran(host, "action_items", "sess_1", utterance_ids=["utt_2"])
+        assert "already made" in llm.systems[0]
+        assert "Do not infer, suggest, or invent" not in llm.systems[0]
+
+        await ran(host, "action_items", "sess_1")
+        assert "Do not infer, suggest, or invent" in llm.systems[1]
+        assert "already made" not in llm.systems[1]
+
+    async def test_an_item_records_the_line_it_came_from(self, harness) -> None:
+        """What lets the transcript show which lines are already tasks — and
+        survive a reload, which remembering the click would not."""
+        host = harness["build"]([self.plugin()], llm=ItemsLLM(), store_artifacts=[])
+        await ran(host, "action_items", "sess_1", utterance_ids=["utt_2"])
+        record = [a for _sid, _n, a in harness["artifacts"] if a.kind == "action_items_json"][-1]
+        assert [item["source"] for item in json.loads(record.content)] == ["utt_2"]
+
+    async def test_a_whole_session_item_belongs_to_no_line(self, harness) -> None:
+        """Nobody picked those, so nothing in the transcript should be marked."""
+        host = harness["build"]([self.plugin()], llm=ItemsLLM(), store_artifacts=[])
+        await ran(host, "action_items", "sess_1")
+        record = [a for _sid, _n, a in harness["artifacts"] if a.kind == "action_items_json"][-1]
+        assert all("source" not in item for item in json.loads(record.content))
+
+    async def test_no_previous_list_starts_one(self, harness) -> None:
+        host = harness["build"]([self.plugin()], llm=ItemsLLM(), store_artifacts=[])
+        artifact = await ran(host, "action_items", "sess_1", utterance_ids=["utt_2"])
+        assert "Book the room" in artifact["content"]
+
+    async def test_a_line_with_nothing_in_it_files_nothing(self, harness) -> None:
+        """The reported bug. A line holding no commitment used to file an
+        artifact saying "no action items were committed to in this session" —
+        over the top of the session's real list, and reported to the operator
+        as a successful add.
+        """
+
+        class Empty:
+            available = True
+
+            async def complete(self, prompt: str, **kwargs: object) -> str:
+                return "[]"
+
+        existing = [{"text": "Send the Q3 numbers", "owner": None, "due": None, "quote": "q"}]
+        host = harness["build"]([self.plugin()], llm=Empty(), store_artifacts=planted(existing))
+        assert await ran(host, "action_items", "sess_1", utterance_ids=["utt_1"]) is None
+        assert harness["artifacts"] == []  # the list on screen is untouched
+
+        # A whole-session run that finds nothing is a different statement, and
+        # is still worth recording.
+        whole = await ran(host, "action_items", "sess_1")
+        assert "this session" in whole["content"]
+
+    async def test_a_rewording_of_an_item_already_listed_is_not_added(self, harness) -> None:
+        """The whole-session pass writes "Finish the migration"; a click on the
+        line it came from writes "Finish the migration by Friday". A list
+        holding both is worse than either, and exact-text matching lets both
+        through — this was seen against the real model, not imagined."""
+        existing = [{"text": "Finish the migration", "owner": None, "due": None, "quote": "q"}]
+        host = harness["build"](
+            [self.plugin()],
+            llm=ItemsLLM("Finish the migration by Friday"),
+            store_artifacts=planted(existing),
+        )
+        artifact = await ran(host, "action_items", "sess_1", utterance_ids=["utt_1"])
+
+        # Not added — but the click did say which line it came from, which is
+        # what marks that line in the transcript. Nothing added, one linked.
+        assert artifact is not None
+        assert artifact["metadata"] == {"count": 1, "added": 0, "linked": 1}
+        assert artifact["content"].count("- [ ]") == 1
+
+    async def test_a_genuinely_different_task_still_gets_through(self, harness) -> None:
+        """The containment rule must not swallow everything: two tasks sharing a
+        verb are still two tasks."""
+        existing = [{"text": "Finish the migration", "owner": None, "due": None, "quote": "q"}]
+        host = harness["build"](
+            [self.plugin()],
+            llm=ItemsLLM("Finish the security review"),
+            store_artifacts=planted(existing),
+        )
+        artifact = await ran(host, "action_items", "sess_1", utterance_ids=["utt_1"])
+        assert artifact is not None
+        assert "security review" in artifact["content"]
+
+    async def test_a_session_end_pass_does_not_delete_what_a_person_picked(self, harness) -> None:
+        """The bug: an action item made *during* the recording vanished the
+        moment the session stopped.
+
+        Stopping dispatches `session.end`, the whole-session pass ran, and it
+        replaced the list wholesale — including everything clicked line by line
+        while the conversation was still going. A re-run must refresh what the
+        machine found without deleting what a person chose.
+        """
+        picked = [
+            {
+                "text": "Book the room",
+                "owner": None,
+                "due": None,
+                "quote": "q",
+                "source": "utt_3",
+            }
+        ]
+        host = harness["build"](
+            [self.plugin()], llm=ItemsLLM("Send the Q3 numbers"), store_artifacts=planted(picked)
+        )
+        artifact = await ran(host, "action_items", "sess_1")
+
+        assert "Book the room" in artifact["content"]  # the click survived
+        assert "Send the Q3 numbers" in artifact["content"]  # …and the pass ran
+
+    async def test_a_session_end_pass_still_drops_its_own_stale_answer(self, harness) -> None:
+        """FR-SES-9: re-running after an edit must not accumulate every previous
+        machine answer. Only the picked ones are carried forward."""
+        stale = [{"text": "Something it no longer finds", "owner": None, "due": None, "quote": "q"}]
+        host = harness["build"](
+            [self.plugin()], llm=ItemsLLM("Send the Q3 numbers"), store_artifacts=planted(stale)
+        )
+        artifact = await ran(host, "action_items", "sess_1")
+        assert "no longer finds" not in artifact["content"]
+
+
+class TestOnDemandPlugins:
+    """Some work is too expensive to do on the chance somebody wants it.
+
+    Summarising costs a whole-transcript LLM call, and most recordings are never
+    opened twice. Doing it automatically bills for summaries nobody asked for
+    and — on a cloud credential — sends every conversation to a provider as a
+    matter of course.
+    """
+
+    def summary(self):
+        from droid_assistant.plugins.builtin.summary import SummaryPlugin
+
+        return SummaryPlugin()
+
+    async def test_an_on_demand_plugin_is_not_dispatched(self, harness) -> None:
+        host = harness["build"]([self.summary(), GoodPlugin()])
+        await host.start(workers=1)
+        try:
+            await host.dispatch(EventType.SESSION_END, "sess_1", {})
+            await host.drain(timeout=5)
+        finally:
+            await host.stop()
+
+        kinds = [artifact.kind for _sid, _name, artifact in harness["artifacts"]]
+        assert "summary" not in kinds
+        assert "good" in kinds  # …and the others still run
+
+    async def test_it_still_runs_when_asked(self, harness) -> None:
+        """`subscribes` says which handler an on-demand run reaches; only the
+        dispatching is switched off."""
+        host = harness["build"]([self.summary()])
+        host.plugins["summary"].config = {"min_utterances": 1}  # the double has three lines
+        artifact = await ran(host, "summary", "sess_1")
+        assert artifact is not None
+        assert artifact["kind"] == "summary"
+
+    async def test_the_api_says_which_plugins_are_on_demand(self, harness) -> None:
+        """The UI needs it to explain an empty tab as a choice rather than a
+        failure."""
+        host = harness["build"]([self.summary(), GoodPlugin()])
+        listing = {row["name"]: row["on_demand"] for row in host.listing()}
+        assert listing == {"summary": True, "good": False}
+
+    async def test_declining_says_why(self, harness) -> None:
+        """ "The plugin produced no artifact" is true and useless. Whoever
+        pressed the button needs a reason they can act on."""
+
+        class Picky(Plugin):
+            name = "picky"
+            version = "1.0.0"
+            api_version = 1
+            subscribes = {Event.SESSION_END}
+
+            async def on_session_end(self, ctx: Context) -> Artifact | None:
+                ctx.decline("nothing here worth summarising")
+                return None
+
+        host = harness["build"]([Picky()])
+        artifact, reason = await host.run_now("picky", "sess_1")
+        assert artifact is None
+        assert reason == "nothing here worth summarising"
+
+    async def test_an_explicit_request_is_not_refused_for_being_short(self, harness) -> None:
+        """`min_utterances` stops a voice note being summarised on the way past.
+        Somebody who pressed the button has already answered that question, and
+        refusing them is a control that does nothing for no stated reason."""
+        host = harness["build"]([self.summary()])
+        host.plugins["summary"].config = {"min_utterances": 99}  # the double has three lines
+        artifact, reason = await host.run_now("summary", "sess_1")
+        assert artifact is not None, reason

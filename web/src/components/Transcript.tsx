@@ -35,6 +35,20 @@ interface Props {
   onSelect?: (utterance: Utterance) => void
   onEdit?: (utterance: Utterance, text: string) => void
   onRenameSpeaker?: (speaker: Speaker) => void
+  /**
+   * Extracts an action item from this one line. Optional rather than always
+   * rendered: the button is a lie where the plugin is disabled or has no LLM to
+   * reach, so the caller passes it only when pressing it would do something.
+   */
+  onActionItem?: (utterance: Utterance) => void
+  /** The line an extraction is running for, so only that one shows a spinner. */
+  actionItemBusyId?: string | null
+  /**
+   * Lines that already produced an action item. Derived from the list itself
+   * rather than remembered per click, so it survives a reload and stays true
+   * if the list is later regenerated from the whole conversation.
+   */
+  actionItemSources?: ReadonlySet<string>
   emptyTitle?: string
   emptyAction?: string
 }
@@ -53,6 +67,9 @@ export function Transcript({
   onSelect,
   onEdit,
   onRenameSpeaker,
+  onActionItem,
+  actionItemBusyId,
+  actionItemSources,
   emptyTitle,
   emptyAction,
 }: Props) {
@@ -146,21 +163,45 @@ export function Transcript({
                 >
                   {clock(utterance.start_ms)}
                 </button>
+
+                {/* Beside the line they act on, and always visible.
+                    Right-aligned they sat a screen-width away from the text on
+                    a desktop; hover-revealed they did not exist at all on a
+                    phone. Dimmed rather than hidden is the compromise the
+                    history list already settled on. */}
+                {!isEditing && (onEdit || onActionItem) && (
+                  <span className="flex items-center gap-0.5">
+                    {onActionItem && (
+                      <LineAction
+                        onClick={() => onActionItem(utterance)}
+                        busy={actionItemBusyId === utterance.utterance_id}
+                        disabled={Boolean(actionItemBusyId)}
+                        label={
+                          actionItemSources?.has(utterance.utterance_id)
+                            ? strings.session.actionItemAgain
+                            : strings.session.actionItemFromLine
+                        }
+                        icon={<TaskIcon done={actionItemSources?.has(utterance.utterance_id)} />}
+                        // Pressing it again is allowed — a line can carry two
+                        // tasks — so it stays lit rather than becoming a badge.
+                        active={actionItemSources?.has(utterance.utterance_id)}
+                      />
+                    )}
+                    {onEdit && (
+                      <LineAction
+                        onClick={() => {
+                          setEditing(utterance.utterance_id)
+                          setDraft(utterance.text)
+                        }}
+                        label={strings.session.editLine}
+                        icon={<PencilIcon />}
+                      />
+                    )}
+                  </span>
+                )}
+
                 {utterance.marked && <span title="Marked moment">⚑</span>}
                 {utterance.edited && <span className="text-fg-dim text-xs">{strings.session.edited}</span>}
-                {onEdit && !isEditing && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditing(utterance.utterance_id)
-                      setDraft(utterance.text)
-                    }}
-                    className="text-fg-dim hover:text-fg ml-auto text-xs opacity-0 transition group-hover:opacity-100 focus:opacity-100"
-                    aria-label="Edit this line"
-                  >
-                    ✎
-                  </button>
-                )}
               </header>
 
               {isEditing ? (
@@ -231,6 +272,90 @@ export function Transcript({
         </button>
       )}
     </div>
+  )
+}
+
+/**
+ * The per-line controls, drawn rather than typed.
+ *
+ * These were Unicode glyphs, and `✎` arrives as a colour emoji on macOS — it
+ * ignored `currentColor`, so it neither dimmed at rest nor darkened on hover
+ * while the checkbox beside it did. Two paths inherit the text colour and look
+ * the same on every platform.
+ */
+const ICON = {
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 1.6,
+  strokeLinecap: 'round',
+  strokeLinejoin: 'round',
+} as const
+
+function TaskIcon({ done = false }: { done?: boolean }) {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden {...ICON}>
+      <rect
+        x="2.5"
+        y="2.5"
+        width="11"
+        height="11"
+        rx="2.5"
+        fill={done ? 'currentColor' : 'none'}
+      />
+      <path d="M5.5 8.2l1.8 1.8 3.2-3.6" stroke={done ? 'var(--color-surface-1)' : undefined} />
+    </svg>
+  )
+}
+
+function PencilIcon() {
+  return (
+    <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden {...ICON}>
+      <path d="M11.2 2.6l2.2 2.2-8 8-2.9.7.7-2.9z" />
+      <path d="M10 3.8l2.2 2.2" />
+    </svg>
+  )
+}
+
+/**
+ * One per-line control.
+ *
+ * Sized for a fingertip rather than for the icon it contains — these were
+ * text-sized and unreachable on a phone. It brightens on hover and on focus, so
+ * a long transcript does not read as a wall of icons at rest.
+ */
+function LineAction({
+  onClick,
+  label,
+  icon,
+  busy = false,
+  disabled = false,
+  active = false,
+}: {
+  onClick: () => void
+  label: string
+  icon: React.ReactNode
+  busy?: boolean
+  disabled?: boolean
+  active?: boolean
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled || busy}
+      aria-label={label}
+      aria-pressed={active || undefined}
+      title={label}
+      className={`hover:bg-surface-3 hover:text-accent focus-visible:text-accent flex h-7 w-7 items-center justify-center rounded-md transition disabled:opacity-40 ${
+        active ? 'text-accent' : 'text-fg-dim/70'
+      }`}
+    >
+      {busy ? (
+        <span className="bg-accent inline-block h-2 w-2 animate-pulse rounded-full" />
+      ) : (
+        icon
+      )}
+    </button>
   )
 }
 

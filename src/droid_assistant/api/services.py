@@ -112,6 +112,12 @@ class RepositoryStore:
         record = await self._repo.get_session(session_id)
         return record.to_json() if record else {}
 
+    async def artifacts(self, session_id: str, *, kind: str | None = None) -> list[dict[str, Any]]:
+        artifacts = await self._repo.list_artifacts(session_id, current_only=True)
+        if kind is None:
+            return artifacts
+        return [artifact for artifact in artifacts if artifact["kind"] == kind]
+
 
 @dataclass
 class ActiveSession:

@@ -92,6 +92,8 @@ export interface PluginInfo {
   enabled: boolean
   subscribes: string[]
   requires_llm: boolean
+  /** Never runs on its own; produces something only when asked to. */
+  on_demand: boolean
   config: Record<string, unknown>
   config_schema: JsonSchema
   last_error: string | null
@@ -300,10 +302,18 @@ export const api = {
   artifacts: (sessionId: string) =>
     request<{ artifacts: Artifact[]; stale: boolean }>(`/api/sessions/${sessionId}/artifacts`),
 
-  runPlugin: (sessionId: string, name: string) =>
+  /**
+   * Run one plugin over a session, or over `utteranceIds` of it. Scoping is
+   * what "make an action item from this line" posts; omitting it means the
+   * whole conversation, which is what a re-run after an edit wants.
+   */
+  runPlugin: (sessionId: string, name: string, utteranceIds?: string[]) =>
     request<{ ran: boolean; artifact: Artifact | null; note?: string }>(
       `/api/sessions/${sessionId}/plugins/${name}/run`,
-      { method: 'POST' },
+      {
+        method: 'POST',
+        body: JSON.stringify(utteranceIds?.length ? { utterance_ids: utteranceIds } : {}),
+      },
     ),
 
   plugins: () =>

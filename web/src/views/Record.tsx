@@ -10,10 +10,12 @@ import { useEffect, useState } from 'react'
 import { api, type ModeInfo, type Preset } from '../api/client'
 import { listInputDevices, connectionInfo, isSecureOrigin, BYTES_PER_HOUR_RAW, type DeviceInfo } from '../capture/recorder'
 import { sourceSupport, type CaptureSource } from '../capture/sources'
+import { Markdown } from '../components/Markdown'
 import { Transcript } from '../components/Transcript'
 import { CostBreakdown, formatCost } from '../components/CostBreakdown'
 import { Button, LevelMeter, Pill, clock } from '../components/primitives'
 import { t } from '../i18n'
+import { useActionItems } from '../state/actionItems'
 import { useRecording } from '../state/recording'
 import { PreflightDialog, type PreflightResult } from './Preflight'
 
@@ -36,6 +38,16 @@ export function Record({ onOpenSession }: { onOpenSession: (id: string) => void 
 
   const recording = state === 'recording'
   const activeMode = modes.find((m) => m.mode === settings.mode)
+
+  // A commitment is made *during* the conversation, and catching it as it goes
+  // past is the whole point — waiting until the recording is over and hunting
+  // for the line is the thing this feature exists to avoid.
+  const actionItems = useActionItems(sessionId)
+  const [showList, setShowList] = useState(false)
+  // Nothing to switch to before anything is on the list, and the toggle goes
+  // away with it rather than stranding the view on an empty panel.
+  const hasList = Boolean(actionItems.list) && actionItems.count > 0
+  const viewingList = showList && hasList
 
   useEffect(() => {
     void (async () => {
@@ -126,8 +138,37 @@ export function Record({ onOpenSession }: { onOpenSession: (id: string) => void 
 
       <NoticeStack notices={notices} onDismiss={dismissNotice} />
 
-      {/* FR-LAT-6: Batch mode shows no transcript while recording, and says so. */}
-      {recording && settings.mode === 'batch' ? (
+      {/* A list built line by line during the conversation has to be readable
+          during it too, or there is no way to see what you have collected
+          without stopping the recording. */}
+      {hasList && (
+        <nav className="border-line flex gap-1 border-b px-3" role="tablist">
+          {[
+            { id: false, label: strings.record.transcriptTab },
+            { id: true, label: strings.record.actionItemsTab(actionItems.count) },
+          ].map((entry) => (
+            <button
+              key={String(entry.id)}
+              type="button"
+              role="tab"
+              aria-selected={viewingList === entry.id}
+              onClick={() => setShowList(entry.id)}
+              className={`border-b-2 px-3 py-2 text-sm transition ${
+                viewingList === entry.id ? 'border-accent text-fg' : 'text-fg-dim border-transparent'
+              }`}
+            >
+              {entry.label}
+            </button>
+          ))}
+        </nav>
+      )}
+
+      {viewingList ? (
+        <div className="flex-1 overflow-y-auto px-4 py-3">
+          <Markdown source={actionItems.list ?? ''} />
+        </div>
+      ) : /* FR-LAT-6: Batch mode shows no transcript while recording, and says so. */
+      recording && settings.mode === 'batch' ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-4 px-8 text-center">
           <p className="font-mono text-5xl tabular-nums">{clock(elapsedMs)}</p>
           <LevelMeter level={level} className="scale-150" />
@@ -139,9 +180,31 @@ export function Record({ onOpenSession }: { onOpenSession: (id: string) => void 
           partial={partial}
           speakers={speakers}
           autoscroll
+          // Only once there is a session to attach one to. The control is on
+          // finalised lines only — a partial has no stored utterance to name.
+          onActionItem={
+            sessionId && actionItems.available
+              ? (utterance) => void actionItems.extract(utterance)
+              : undefined
+          }
+          actionItemBusyId={actionItems.busyId}
+          actionItemSources={actionItems.sources}
           emptyTitle={recording ? strings.record.emptyTranscript : strings.record.idle}
           emptyAction={recording ? undefined : 'Press Record when you are ready.'}
         />
+      )}
+
+      {actionItems.notice && (
+        <button
+          type="button"
+          onClick={actionItems.clearNotice}
+          className="bg-accent/15 text-accent w-full px-4 py-2 text-left text-sm"
+        >
+          {actionItems.notice}
+        </button>
+      )}
+      {actionItems.error && (
+        <p className="bg-warn/15 text-warn px-4 py-2 text-sm">{actionItems.error}</p>
       )}
 
       {state === 'done' && sessionId && (

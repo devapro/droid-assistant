@@ -327,6 +327,40 @@ class TestEditingAndArtifacts:
 
         assert "WEBVTT" in client.get(f"/api/sessions/{session_id}/export?format=vtt").text
 
+    def test_a_plugin_run_refuses_a_line_from_another_session(self, client) -> None:
+        """Scoping a run to an id this session does not have would narrow it to
+        nothing, and an empty artifact reads exactly like "there was nothing to
+        find" — so it is refused rather than run."""
+        created = client.post("/api/sessions", json={"languages": ["en"]}).json()
+        session_id = created["session_id"]
+        with client.websocket_connect(f"/ws/ingest?token={created['ingest_token']}") as websocket:
+            websocket.receive_json()
+            stream_audio(websocket, conversation())
+        client.post(f"/api/sessions/{session_id}/stop")
+
+        refused = client.post(
+            f"/api/sessions/{session_id}/plugins/summary/run",
+            json={"utterance_ids": ["utt_from_somewhere_else"]},
+        )
+        assert refused.status_code == 404
+        assert "utt_from_somewhere_else" in refused.json()["error"]
+
+        # An empty list is not "the whole session" — a caller that meant to send
+        # one id and sent none must not silently get a session-wide run.
+        assert (
+            client.post(
+                f"/api/sessions/{session_id}/plugins/summary/run", json={"utterance_ids": []}
+            ).status_code
+            == 422
+        )
+
+        # Omitting the field entirely still means the whole session — and is
+        # accepted rather than rejected as malformed. It reaches the plugin,
+        # which then fails on this suite's missing LLM credential; that is a
+        # 502 about the environment, not a 4xx about the request.
+        accepted = client.post(f"/api/sessions/{session_id}/plugins/summary/run")
+        assert accepted.status_code not in {404, 422}
+
 
 class TestDeletionAndRecovery:
     def test_deleting_purges_rows_and_the_audio_file(self, client, services: Services) -> None:

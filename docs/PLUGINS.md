@@ -20,7 +20,7 @@ class WordCountPlugin(Plugin):
     subscribes = {Event.SESSION_END}
 
     async def on_session_end(self, ctx: Context) -> Artifact | None:
-        utterances = await ctx.store.utterances(ctx.session_id)
+        utterances = await ctx.utterances()
         words = sum(len(u.text.split()) for u in utterances)
         return Artifact(kind="wordcount", content=f"{words} words in {len(utterances)} utterances")
 ```
@@ -65,13 +65,75 @@ async def on_session_end(self, ctx: Context) -> Artifact | None:
     return Artifact(kind="summary", content=summary)
 ```
 
+- `ctx.utterances()` — the lines this run covers. **Prefer it to
+  `ctx.store.utterances()`**: see *Running over part of a session* below.
 - `ctx.store` — read-only. A plugin cannot mutate the transcript.
 - `ctx.llm` — **pre-configured**. You never see a credential, never construct a
   client, and the global budget and local-only switch are already applied
   (FR-PLG-8). Check `ctx.llm.available` if your plugin can degrade.
 - `ctx.config` — a validated instance of your own `config_schema`.
 - `ctx.emit_artifact(...)` — emit at any point, not only from a return.
+- `ctx.previous(kind)` — your own current artifact of that kind, or `None`.
+  What a scoped run adds to.
+- `ctx.utterance_ids` — the scope, or `None` for the whole session.
 - `ctx.logger` — namespaced; use `extra=` for structured fields.
+
+### Running over part of a session
+
+The session view has a control on each line — "make an action item out of
+this". It runs one plugin over one utterance, through the same handler:
+
+```
+POST /api/sessions/{id}/plugins/{name}/run
+{"utterance_ids": ["utt_abc"]}
+```
+
+The event is still `session.end`. What changes is how much of the session the
+handler can see, and the only thing a plugin has to do to honour it is read
+`ctx.utterances()` rather than `ctx.store.utterances()`. A plugin that reaches
+past it answers a question about one line with the whole conversation, which is
+a bug the host cannot catch for you.
+
+Three things are worth deciding deliberately if your plugin supports being
+scoped. All three were learned by getting them wrong first:
+
+- **Ask a different question.** Instructions written for an unattended pass over
+  a whole transcript are written against fabrication — "extract only what was
+  actually committed to". Applied to a line somebody deliberately picked, they
+  answer the wrong question: they weigh whether it qualifies, decide it is only
+  a remark, and return nothing, so the button appears to do nothing. The person
+  clicking has already decided. `action_items` keeps a second system prompt for
+  this, and it is the difference between the feature working and not.
+- **Add rather than replace.** Somebody who picks a second line means "and this
+  one too". `action_items` reads its previous JSON artifact through
+  `ctx.previous`, merges, and treats two items as the same when one's words
+  contain the other's — the whole-session pass writes "Finish the migration" and
+  a click on the line it came from writes "Finish the migration by Friday", and
+  a list with both is worse than either. A whole-session run still replaces,
+  because that is what a re-run after an edit has to mean.
+- **Say what actually happened.** Report enough in `metadata` for the UI to tell
+  "added it", "it was already there", and "found nothing" apart. Those are three
+  outcomes a reader acts on differently, and a count alone distinguishes none of
+  them. `action_items` returns `added` and `linked` beside `count`, and records
+  a `source` on each item so the transcript can mark the lines already covered.
+
+## Running only when asked
+
+Set `on_demand = True` and the host never dispatches the plugin; it produces
+something only when somebody runs it. `subscribes` still declares which handler
+that run reaches.
+
+```python
+class SummaryPlugin(Plugin):
+    subscribes = {Event.SESSION_END}   # the handler an on-demand run calls
+    on_demand = True                   # …but never dispatched
+```
+
+Worth it for anything whose cost is a call over the whole transcript. Most
+recordings are never opened twice, so doing that automatically bills for output
+nobody asked for and — on a cloud credential — sends every conversation to a
+provider as a matter of course. The session view gives such a plugin a tab with
+a **Generate** button, and says why it is empty rather than implying a failure.
 
 ## Configuration
 
@@ -131,7 +193,10 @@ view detects this and offers a re-run; the API is:
 POST /api/sessions/{id}/plugins/{name}/run
 ```
 
-which produces a new version rather than overwriting the old one.
+which produces a new version rather than overwriting the old one. The same
+endpoint is what the history list's *Summarise* button posts, and what a
+session that never ran a plugin uses to run one for the first time — the tab
+for an idle plugin offers *Generate* instead of an empty panel.
 
 ## Testing
 

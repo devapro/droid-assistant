@@ -26,6 +26,7 @@ import inspect
 import logging
 import sys
 import traceback
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, cast
@@ -78,6 +79,7 @@ class LoadedPlugin:
             "enabled": self.enabled,
             "subscribes": sorted(str(e) for e in self.instance.subscribes),
             "requires_llm": self.instance.requires_llm,
+            "on_demand": self.instance.on_demand,
             "config": self.config,
             "config_schema": self.instance.config_json_schema(),
             "last_error": self.last_error,
@@ -177,6 +179,9 @@ class _Job:
     event: Event
     session_id: str
     payload: dict[str, Any]
+    #: Only ever set by an on-demand run the operator asked for. Dispatched
+    #: events always cover the whole session.
+    utterance_ids: tuple[str, ...] | None = None
 
 
 class PluginHost:
@@ -296,6 +301,8 @@ class PluginHost:
         for plugin in self.plugins.values():
             if not plugin.enabled or plugin_event not in plugin.instance.subscribes:
                 continue
+            if plugin.instance.on_demand:
+                continue  # runs when asked for, never on an event
             if selection is not None and plugin.name not in selection:
                 continue
             if session_id in plugin.failed_sessions:
@@ -317,21 +324,39 @@ class PluginHost:
                     extra={"plugin": plugin.name, "event": str(plugin_event)},
                 )
 
-    async def run_now(self, name: str, session_id: str) -> dict[str, Any] | None:
+    async def run_now(
+        self, name: str, session_id: str, *, utterance_ids: Sequence[str] | None = None
+    ) -> tuple[dict[str, Any] | None, str | None]:
         """Re-run one plugin's `session.end` handler over the current transcript.
 
         This is what `POST /api/sessions/{id}/plugins/{name}/run` calls after a
         transcript edit (FR-SES-9, FR-PLG-12) — synchronous, because the caller
         is waiting for the new artifact.
+
+        `utterance_ids` narrows the run to part of the session: "make an action
+        item out of this line". The event stays `session.end` because that is
+        where a plugin's summarising work already lives — what changes is how
+        much of the session the handler is looking at, not which handler runs.
         """
         plugin = self.plugins.get(name)
         if plugin is None:
             raise KeyError(name)
         plugin.failed_sessions.discard(session_id)
+        declined: list[str] = []
         artifact = await self._invoke(
-            _Job(plugin, Event.SESSION_END, session_id, {"reason": "manual"}), raise_errors=True
+            _Job(
+                plugin,
+                Event.SESSION_END,
+                session_id,
+                {"reason": "manual"},
+                utterance_ids=tuple(utterance_ids) if utterance_ids is not None else None,
+            ),
+            raise_errors=True,
+            declined=declined,
         )
-        return artifact
+        # The reason travels with the result: a caller who is waiting for an
+        # artifact and gets none needs to be told why, not merely that.
+        return artifact, (declined[0] if declined else None)
 
     # --- worker -------------------------------------------------------------
 
@@ -345,7 +370,9 @@ class PluginHost:
             finally:
                 self._queue.task_done()
 
-    async def _invoke(self, job: _Job, *, raise_errors: bool = False) -> dict[str, Any] | None:
+    async def _invoke(
+        self, job: _Job, *, raise_errors: bool = False, declined: list[str] | None = None
+    ) -> dict[str, Any] | None:
         plugin = job.plugin
         handler = plugin.instance.handler_for(job.event)
         if handler is None:
@@ -384,6 +411,7 @@ class PluginHost:
             logger=logging.getLogger(f"droid_assistant.plugins.{plugin.name}"),
             event=job.event,
             payload=job.payload,
+            utterance_ids=job.utterance_ids,
             _emit=emit,
         )
 
@@ -417,6 +445,8 @@ class PluginHost:
 
         if isinstance(result, Artifact):
             await emit(result)
+        if declined is not None and ctx.declined:
+            declined.append(ctx.declined)
         if plugin.last_error and self._state_sink is not None:
             plugin.last_error = None
             await self._state_sink(plugin.name, clear_error=True)

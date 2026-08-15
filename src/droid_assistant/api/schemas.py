@@ -70,6 +70,16 @@ class PluginPatchRequest(BaseModel):
     config: dict[str, Any] | None = None
 
 
+class PluginRunRequest(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    #: The lines to run over. `null` — the ordinary case — means the whole
+    #: session. An empty list is rejected rather than read as "everything":
+    #: a UI that meant to send one id and sent none would otherwise summarise
+    #: the entire conversation and look like it had worked.
+    utterance_ids: Annotated[list[str], Field(min_length=1)] | None = None
+
+
 class PresetRequest(BaseModel):
     model_config = {"extra": "forbid"}
 

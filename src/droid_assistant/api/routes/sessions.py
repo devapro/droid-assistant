@@ -19,6 +19,7 @@ from ..schemas import (
     CreateSessionRequest,
     CreateSessionResponse,
     EditUtteranceRequest,
+    PluginRunRequest,
     RenameSpeakerRequest,
     UpdateSessionRequest,
 )
@@ -341,17 +342,41 @@ async def list_artifacts(
 
 
 @router.post("/sessions/{session_id}/plugins/{name}/run")
-async def run_plugin(session_id: str, name: str, services: Services) -> dict[str, Any]:
+async def run_plugin(
+    session_id: str, name: str, services: Services, body: PluginRunRequest | None = None
+) -> dict[str, Any]:
+    """Run one plugin over this session, or over part of it.
+
+    `utterance_ids` narrows it to particular lines — what "make an action item
+    out of this message" posts. Omitting it means the whole conversation, which
+    is what a re-run after an edit wants (FR-SES-9, FR-PLG-12).
+    """
     if await services.repo.get_session(session_id) is None:
         raise HTTPException(status_code=404, detail="no such session")
+    wanted = body.utterance_ids if body else None
+    if wanted is not None:
+        known = {u.id for u in await services.repo.list_utterances(session_id)}
+        # Checked here rather than left to the plugin: an id from another
+        # session would otherwise silently narrow the run to nothing, and an
+        # empty artifact is indistinguishable from "there was nothing to find".
+        if missing := [uid for uid in wanted if uid not in known]:
+            raise HTTPException(
+                status_code=404, detail=f"not utterances of this session: {', '.join(missing)}"
+            )
     try:
-        artifact = await services.plugins.run_now(name, session_id)
+        artifact, declined = await services.plugins.run_now(name, session_id, utterance_ids=wanted)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"no plugin named {name!r}") from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     if artifact is None:
-        return {"ran": True, "artifact": None, "note": "the plugin produced no artifact"}
+        # A plugin that declined says why; one that simply found nothing does
+        # not, and "produced no artifact" is the honest thing to report then.
+        return {
+            "ran": True,
+            "artifact": None,
+            "note": declined or "the plugin produced no artifact",
+        }
     return {"ran": True, "artifact": artifact}
 
 
