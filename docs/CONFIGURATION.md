@@ -55,6 +55,11 @@ model = "large-v3-turbo"
 | `auto_gain_control` | `false` | See below |
 | `client_buffer_cap_mb` | `256` | Client-side buffer ceiling (NFR-RES-5) |
 
+**Capture source** is a client-side choice, stored in the browser rather than
+here, and recorded per session in `audio_constraints.source`. It is one of
+`microphone`, `system` (whatever is playing on the machine running the browser),
+or `both`. See the recording guidance in the README for when each is right.
+
 **On the three audio-processing defaults.** All three are off, and that is
 deliberate. They are tuned for a single near voice on a call, and noise
 suppression in particular will attenuate the quieter people at a meeting table —

@@ -135,8 +135,11 @@ placeholder. The type enforces it — `Utterance.speaker_id` is `None` on partia
 `web/src/`:
 
 - `capture/` — the AudioWorklet (off the main thread, so rendering a
-  2000-line transcript cannot glitch the recording), the IndexedDB buffer, and
-  the Wake Lock.
+  2000-line transcript cannot glitch the recording), the IndexedDB buffer, the
+  Wake Lock, and the source selection. Microphone and display capture are two
+  `MediaStream`s connected to the same worklet input, which Web Audio sums for
+  free; mixing two sources drops each to 0.7 gain, because a microphone and a
+  call at full scale clip when added and clipping is not recoverable.
 - `transport/` — the ingest socket with retransmission, and the event stream
   with replay. The recording tab and a watching laptop use the *same* event
   stream class, so the live view and the watching view cannot drift apart.

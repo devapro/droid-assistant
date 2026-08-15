@@ -4,4 +4,5 @@ import { defineConfig } from 'vitest/config'
 // not need vitest's types.
 export default defineConfig({
   test: { environment: 'node', globals: true, include: ['src/**/*.test.ts'] },
+
 })

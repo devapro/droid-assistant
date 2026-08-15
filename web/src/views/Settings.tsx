@@ -13,6 +13,7 @@
 import { useEffect, useState } from 'react'
 import { api, type Health, type JsonSchemaProperty, type PluginInfo } from '../api/client'
 import { listInputDevices, type DeviceInfo } from '../capture/recorder'
+import { sourceSupport, type CaptureSource } from '../capture/sources'
 import { Button, EmptyState, Pill } from '../components/primitives'
 import { t } from '../i18n'
 import { useRecording } from '../state/recording'
@@ -91,8 +92,31 @@ export function Settings() {
 function CaptureSection({ devices }: { devices: DeviceInfo[] }) {
   const strings = t()
   const { settings, updateSettings } = useRecording()
+  const support = sourceSupport()
   return (
     <div className="flex flex-col gap-5">
+      <Field
+        label={strings.settings.source}
+        help={support.system ? strings.settings.sourceHelp : strings.settings.sourceUnsupported}
+      >
+        <select
+          value={settings.source}
+          onChange={(event) => updateSettings({ source: event.target.value as CaptureSource })}
+          className="bg-surface-2 border-line w-full rounded-lg border px-3 py-2"
+        >
+          <option value="microphone">{strings.settings.sourceMicrophone}</option>
+          <option value="system" disabled={!support.system}>
+            {strings.settings.sourceSystem}
+          </option>
+          <option value="both" disabled={!support.system}>
+            {strings.settings.sourceBoth}
+          </option>
+        </select>
+        {settings.source !== 'microphone' && (
+          <p className="text-warn mt-1 text-xs">{strings.settings.sourceConsent}</p>
+        )}
+      </Field>
+
       <Field label={strings.settings.device} help={strings.settings.deviceHelp}>
         <select
           value={settings.deviceId ?? ''}

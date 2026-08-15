@@ -9,6 +9,7 @@
 import { useEffect, useState } from 'react'
 import { api, type ModeInfo, type Preset } from '../api/client'
 import { listInputDevices, connectionInfo, isSecureOrigin, BYTES_PER_HOUR_RAW, type DeviceInfo } from '../capture/recorder'
+import { sourceSupport, type CaptureSource } from '../capture/sources'
 import { Transcript } from '../components/Transcript'
 import { CostBreakdown, formatCost } from '../components/CostBreakdown'
 import { Button, LevelMeter, Pill, clock } from '../components/primitives'
@@ -360,6 +361,7 @@ function SetupPanel({
   const strings = t()
   const { settings, updateSettings } = useRecording()
   const [presetName, setPresetName] = useState('')
+  const support = sourceSupport()
 
   return (
     <div className="border-line bg-surface-2 mb-3 flex flex-col gap-3 rounded-xl border p-3 text-sm">
@@ -378,6 +380,29 @@ function SetupPanel({
           ))}
         </div>
       )}
+
+      <label className="flex flex-col gap-1">
+        <span className="text-fg-dim text-xs">{strings.settings.source}</span>
+        <select
+          value={settings.source}
+          onChange={(event) => updateSettings({ source: event.target.value as CaptureSource })}
+          className="bg-surface-1 border-line rounded-lg border px-2 py-1.5"
+        >
+          <option value="microphone">{strings.settings.sourceMicrophone}</option>
+          <option value="system" disabled={!support.system}>
+            {strings.settings.sourceSystem}
+          </option>
+          <option value="both" disabled={!support.system}>
+            {strings.settings.sourceBoth}
+          </option>
+        </select>
+        <span className="text-fg-dim text-xs">
+          {support.system ? strings.settings.sourceHelp : strings.settings.sourceUnsupported}
+        </span>
+        {settings.source !== 'microphone' && (
+          <span className="text-warn text-xs">{strings.settings.sourceConsent}</span>
+        )}
+      </label>
 
       <label className="flex flex-col gap-1">
         <span className="text-fg-dim text-xs">{strings.settings.device}</span>

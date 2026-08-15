@@ -12,6 +12,8 @@
  * measurement can be attributed to them (FR-CAP-11, R6).
  */
 
+import { captureSystemAudio, describeStream, type CaptureSource } from './sources'
+
 export interface AudioProcessingOptions {
   echoCancellation: boolean
   noiseSuppression: boolean
@@ -20,6 +22,8 @@ export interface AudioProcessingOptions {
 
 export interface RecorderOptions extends AudioProcessingOptions {
   deviceId?: string
+  /** Microphone, this machine's playback, or both mixed (SRS §2.1). */
+  source?: CaptureSource
   chunkMs: number
   onChunk: (pcm: ArrayBuffer, tMs: number) => void
   onLevel: (peak: number) => void
@@ -46,8 +50,12 @@ export class MicrophonePermissionError extends Error {
 export class Recorder {
   private context: AudioContext | null = null
   private node: AudioWorkletNode | null = null
-  private source: MediaStreamAudioSourceNode | null = null
+  private inputs: MediaStreamAudioSourceNode[] = []
+  private gains: GainNode[] = []
+  /** The microphone stream, when one is in use. */
   private stream: MediaStream | null = null
+  /** The display-capture stream, when one is in use. */
+  private display: MediaStream | null = null
   private elapsedMs = 0
   private stopping = false
 
@@ -62,16 +70,30 @@ export class Recorder {
   }
 
   get trackLabel(): string {
-    return this.stream?.getAudioTracks()[0]?.label ?? ''
+    return [describeStream(this.stream), describeStream(this.display)]
+      .filter(Boolean)
+      .join(' + ')
   }
 
-  get constraintsApplied(): AudioProcessingOptions & { sampleRateIn: number } {
+  private get source(): CaptureSource {
+    return this.options.source ?? 'microphone'
+  }
+
+  /** Recorded in session metadata, so an accuracy figure can be attributed to
+   *  the signal chain that produced it (FR-CAP-11, R6). */
+  get constraintsApplied(): AudioProcessingOptions & {
+    sampleRateIn: number
+    source: CaptureSource
+    trackLabel: string
+  } {
     const settings = this.stream?.getAudioTracks()[0]?.getSettings() ?? {}
     return {
       echoCancellation: Boolean(settings.echoCancellation),
       noiseSuppression: Boolean(settings.noiseSuppression),
       autoGainControl: Boolean(settings.autoGainControl),
       sampleRateIn: this.sampleRateIn,
+      source: this.source,
+      trackLabel: this.trackLabel,
     }
   }
 
@@ -79,21 +101,29 @@ export class Recorder {
     if (this.node) return
     this.stopping = false
 
-    const constraints: MediaStreamConstraints = {
-      audio: {
-        deviceId: this.options.deviceId ? { exact: this.options.deviceId } : undefined,
-        channelCount: { ideal: 1 },
-        echoCancellation: this.options.echoCancellation,
-        noiseSuppression: this.options.noiseSuppression,
-        autoGainControl: this.options.autoGainControl,
-      },
-      video: false,
+    // Display capture first: it opens a picker, and failing after the
+    // microphone is already live would leave a permission granted for nothing.
+    if (this.source !== 'microphone') {
+      this.display = await captureSystemAudio()
     }
-
-    try {
-      this.stream = await navigator.mediaDevices.getUserMedia(constraints)
-    } catch (error) {
-      throw translateGetUserMediaError(error)
+    if (this.source !== 'system') {
+      const constraints: MediaStreamConstraints = {
+        audio: {
+          deviceId: this.options.deviceId ? { exact: this.options.deviceId } : undefined,
+          channelCount: { ideal: 1 },
+          echoCancellation: this.options.echoCancellation,
+          noiseSuppression: this.options.noiseSuppression,
+          autoGainControl: this.options.autoGainControl,
+        },
+        video: false,
+      }
+      try {
+        this.stream = await navigator.mediaDevices.getUserMedia(constraints)
+      } catch (error) {
+        this.display?.getTracks().forEach((track) => track.stop())
+        this.display = null
+        throw translateGetUserMediaError(error)
+      }
     }
 
     // Do not pin the context to 16 kHz: forcing a rate the hardware does not
@@ -104,12 +134,25 @@ export class Recorder {
 
     await this.context.audioWorklet.addModule('/capture-worklet.js')
 
-    this.source = this.context.createMediaStreamSource(this.stream)
     this.node = new AudioWorkletNode(this.context, 'capture-processor', {
       numberOfInputs: 1,
       numberOfOutputs: 0,
       processorOptions: { chunkMs: this.options.chunkMs },
     })
+
+    // Web Audio sums everything connected to one input, so mixing is just two
+    // connections. Headroom matters though: a microphone and a video call at
+    // full scale clip when added, and clipping is not recoverable downstream.
+    const active = [this.stream, this.display].filter(Boolean) as MediaStream[]
+    const gain = active.length > 1 ? 0.7 : 1
+    for (const stream of active) {
+      const input = this.context.createMediaStreamSource(stream)
+      const level = this.context.createGain()
+      level.gain.value = gain
+      input.connect(level).connect(this.node)
+      this.inputs.push(input)
+      this.gains.push(level)
+    }
 
     this.node.port.onmessage = (event: MessageEvent) => {
       const data = event.data
@@ -119,18 +162,34 @@ export class Recorder {
       this.options.onLevel(data.peak as number)
     }
 
-    this.source.connect(this.node)
-
-    // FR-CAP-9: the track ending on its own is a real failure the user must see
-    // — a revoked permission, or a USB microphone unplugged mid-meeting.
-    for (const track of this.stream.getAudioTracks()) {
+    // FR-CAP-9: a track ending on its own is a real failure the user must see —
+    // a revoked permission, a microphone unplugged mid-meeting, or the browser's
+    // own "Stop sharing" button, which is very easy to hit by accident.
+    for (const track of this.stream?.getAudioTracks() ?? []) {
       track.addEventListener('ended', () => {
         if (!this.stopping) {
-          this.options.onEnded('the microphone stopped — it may have been unplugged or its permission revoked')
+          this.options.onEnded(
+            'the microphone stopped — it may have been unplugged or its permission revoked',
+          )
         }
       })
       track.addEventListener('mute', () => {
         if (!this.stopping) this.options.onLevel(0)
+      })
+    }
+    for (const track of this.display?.getTracks() ?? []) {
+      track.addEventListener('ended', () => {
+        if (this.stopping) return
+        if (this.source === 'both') {
+          // The microphone is still live, so the recording continues rather
+          // than ending — but half the audio has just gone, and saying nothing
+          // would be the worst outcome.
+          this.options.onEnded(
+            'screen sharing stopped, so audio from this machine is no longer being recorded',
+          )
+        } else {
+          this.options.onEnded('screen sharing stopped, so recording has ended')
+        }
       })
     }
   }
@@ -140,14 +199,20 @@ export class Recorder {
     this.stopping = true
     this.node?.port.postMessage({ type: 'stop' })
     this.node?.disconnect()
-    this.source?.disconnect()
+    this.inputs.forEach((input) => input.disconnect())
+    this.gains.forEach((level) => level.disconnect())
     this.stream?.getTracks().forEach((track) => track.stop())
+    // Stopping the video track is what actually ends the browser's "sharing"
+    // banner, so it matters that this runs.
+    this.display?.getTracks().forEach((track) => track.stop())
     if (this.context && this.context.state !== 'closed') {
       await this.context.close().catch(() => undefined)
     }
     this.node = null
-    this.source = null
+    this.inputs = []
+    this.gains = []
     this.stream = null
+    this.display = null
     this.context = null
   }
 }

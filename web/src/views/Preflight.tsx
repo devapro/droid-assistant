@@ -62,6 +62,14 @@ export function PreflightDialog({
 
     void (async () => {
       try {
+        // Display capture opens a picker, so it is not probed here: asking the
+        // user to choose a tab twice — once to check, once to record — is worse
+        // than starting and reporting a silent share immediately.
+        if (settings.source === 'system') {
+          setMic('pass')
+          setMicMessage(strings.preflight.sourcePending)
+          return
+        }
         const stream = await navigator.mediaDevices.getUserMedia({
           audio: {
             deviceId: settings.deviceId ? { exact: settings.deviceId } : undefined,

@@ -47,6 +47,10 @@ export const en = {
     micSilent: 'The microphone is not picking anything up.',
     micSilentRemedy: 'Check that it is not muted and that the right device is selected.',
     micFail: 'No microphone access.',
+    sourceOk: 'Capturing this machine’s audio',
+    sourceSilent: 'This machine is not playing any sound.',
+    sourceSilentRemedy: 'Start the video or call you want to record, then try again.',
+    sourcePending: 'Choose what to share when the browser asks…',
     diskLow: 'Disk space is running low on the server.',
     diskFull: 'The server is too low on disk to start a recording.',
     recordOffline: 'Record offline',
@@ -130,8 +134,19 @@ export const en = {
     backends: 'Backends',
     plugins: 'Plugins',
     server: 'Server',
+    source: 'Capture from',
+    sourceMicrophone: 'Microphone',
+    sourceSystem: 'Audio playing on this machine',
+    sourceBoth: 'Both, mixed',
+    sourceHelp:
+      'Capturing this machine’s audio takes a call before it becomes sound in a room — no loudspeaker, no room, no microphone. It is the biggest accuracy gain available for online meetings. Pick “Both” when you are in the call yourself.',
+    sourceUnsupported:
+      'This browser cannot capture audio playing on this machine. Chrome or Edge on a desktop can.',
+    sourceConsent:
+      'Everyone in a call is being recorded, including people who cannot see this screen. Whether you may do that is your responsibility, not the software’s.',
     device: 'Microphone',
-    deviceHelp: 'A USB microphone plugged into this device is the single biggest accuracy gain available.',
+    deviceHelp:
+      'When recording a room, a USB microphone plugged into this device is the single biggest accuracy gain available.',
     languages: 'Languages',
     targetLanguage: 'Translate into',
     mode: 'Latency mode',

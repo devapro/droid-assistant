@@ -14,6 +14,8 @@ native app and there will not be one — the reasoning is recorded in
   gender survive the trip out of Russian and Serbian
 - **Plugins** that receive conversation events and produce artifacts; summary
   and action-items ship as references
+- **Capture the room or the machine** — a microphone, the audio playing on the
+  device running the browser (a video call, a recording), or both mixed
 - **Local-first**: nothing leaves the machine unless you enable a cloud backend
   (Deepgram or OpenAI transcription, both optional)
 
@@ -95,6 +97,17 @@ This affects results more than any setting in the app.
   single near voice and will suppress the quieter people at the table. It is off
   by default here for that reason.
 - Record 30 seconds and check the transcript before a session you cannot repeat.
+
+**For an online call, capture the machine instead of the room.** Set *Capture
+from* to "Audio playing on this machine" and share the call's browser tab with
+audio. That takes the remote voices before they become sound in your room —
+skipping the loudspeaker, the room, and the microphone — and transcribes them
+about as well as someone sitting beside you. Choose "Both, mixed" when you are
+speaking in the call yourself.
+
+Chrome and Edge on a desktop can do this. Firefox and Safari cannot. On macOS
+only *tab* audio is available, not whole-screen audio — that is an OS
+limitation, not one of this project.
 
 ## Accuracy, honestly
 

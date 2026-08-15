@@ -12,6 +12,7 @@ import { create } from 'zustand'
 import { api, type ModeInfo, type Speaker, type Utterance } from '../api/client'
 import { ChunkBuffer, clearSession, recordPendingSession } from '../capture/buffer'
 import { Recorder, type AudioProcessingOptions } from '../capture/recorder'
+import type { CaptureSource } from '../capture/sources'
 import { WakeLock, type WakeLockState } from '../capture/wakelock'
 import { EventStream, type ServerEvent } from '../transport/events'
 import { IngestClient, type LinkState } from '../transport/ingest'
@@ -20,6 +21,7 @@ export type RecordState = 'idle' | 'permission' | 'recording' | 'stopping' | 'do
 
 export interface CaptureSettings extends AudioProcessingOptions {
   deviceId?: string
+  source: CaptureSource
   languages: string[]
   targetLanguage: string
   mode: 'live' | 'balanced' | 'batch'
@@ -86,6 +88,7 @@ const SETTINGS_KEY = 'droid.capture.settings'
 
 function loadSettings(): CaptureSettings {
   const defaults: CaptureSettings = {
+    source: 'microphone',
     languages: ['en'],
     targetLanguage: 'en',
     mode: 'balanced',
@@ -181,6 +184,7 @@ export const useRecording = create<RecordingState>((set, get) => ({
           min_speakers: settings.minSpeakers,
           max_speakers: settings.maxSpeakers,
           audio_constraints: {
+            source: settings.source,
             echoCancellation: settings.echoCancellation,
             noiseSuppression: settings.noiseSuppression,
             autoGainControl: settings.autoGainControl,
