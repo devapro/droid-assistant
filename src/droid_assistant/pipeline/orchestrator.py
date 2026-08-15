@@ -24,6 +24,7 @@ import asyncio
 import contextlib
 import logging
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -43,6 +44,7 @@ from ..domain import (
     Samples,
     SessionState,
     Speaker,
+    SpeakerSegment,
     StreamConfig,
     Utterance,
     new_id,
@@ -55,6 +57,7 @@ from .localagreement import LocalAgreement, merge_results
 from .modes import ModeProfile, profile_for
 from .ringbuffer import RingBuffer
 from .speakers import OnlineSpeakerClusterer
+from .turns import OpenTurn, SpeechRun, split_by_speaker
 from .vad import SpeechSegment, VADSegmenter, build_vad, load_vad
 
 log = logging.getLogger(__name__)
@@ -110,102 +113,6 @@ class _Attribution:
     speaker: Speaker | None
     embedding: Embedding | None
     diarization_ms: float
-
-
-@dataclass(slots=True)
-class _OpenTurn:
-    """One speaker's turn, while it is still being assembled.
-
-    A VAD segment is a breath; a *message* is a turn — everything one person
-    says before someone else speaks. Keeping the turn open across their pauses
-    is what stops a conversation rendering as a column of one-word lines, and it
-    is what gives the recogniser the first half of a sentence as context for the
-    second.
-
-    Text is only ever **appended**. Nothing already on screen is rewritten, so
-    Balanced keeps the property FR-LAT-5 exists for — no partials, no words
-    changing under the reader — while the message itself is allowed to grow.
-    """
-
-    utterance: Utterance
-    speaker_index: int | None
-    #: The VAD endpoints this turn has covered. Deliberately *not* the
-    #: utterance's own timestamps: those come back from the recogniser, which
-    #: reports where it found words, routinely seconds short of where the audio
-    #: ended. Judging a pause by them measures the recogniser's silence
-    #: trimming rather than the speaker's pause, and splits a turn that never
-    #: paused at all.
-    audio_start_ms: int
-    audio_end_ms: int
-    confidence_sum: float = 0.0
-    confidence_ms: int = 0
-
-    @classmethod
-    def opened(
-        cls,
-        utterance: Utterance,
-        speaker_index: int | None,
-        result: ASRResult,
-        audio: AudioBuffer,
-        segment: SpeechSegment,
-    ) -> _OpenTurn:
-        turn = cls(
-            utterance=utterance,
-            speaker_index=speaker_index,
-            audio_start_ms=segment.start_ms,
-            audio_end_ms=segment.end_ms,
-        )
-        turn.weigh(result.confidence, audio.duration_ms)
-        return turn
-
-    def accepts(
-        self, speaker_index: int | None, segment: SpeechSegment, *, gap_ms: int, max_ms: int
-    ) -> bool:
-        """Does this segment continue the turn, or start a new message?"""
-        if gap_ms <= 0:  # joining disabled: one utterance per segment
-            return False
-        # An unattributed segment joins whatever turn is open. Diarization
-        # declines to label the shortest ones — "угу", "да", a laugh — and
-        # leaving those as speakerless messages of their own reads as a bug,
-        # which is the same call `assign_speaker` makes for the same reason.
-        if speaker_index is not None and speaker_index != self.speaker_index:
-            return False
-        if segment.start_ms - self.audio_end_ms > gap_ms:
-            return False
-        return segment.end_ms - self.audio_start_ms <= max_ms
-
-    def extend(
-        self,
-        result: ASRResult,
-        audio: AudioBuffer,
-        attribution: _Attribution,
-        segment: SpeechSegment,
-    ) -> None:
-        """Grow the utterance in place. The caller republishes it afterwards."""
-        self.audio_end_ms = max(self.audio_end_ms, segment.end_ms)
-        utterance = self.utterance
-        utterance.text = f"{utterance.text} {result.text.strip()}".strip()
-        utterance.end_ms = max(utterance.end_ms, result.end_ms)
-        utterance.words.extend(result.words)
-        utterance.language = utterance.language or result.language
-        # FR-DIA-5: a turn whose opening segment was too short to embed still
-        # needs a vector, or it cannot be renamed retroactively later.
-        if utterance.embedding is None and attribution.embedding is not None:
-            utterance.embedding = attribution.embedding
-        utterance.timings["diarization_ms"] = round(
-            utterance.timings.get("diarization_ms", 0.0) + attribution.diarization_ms, 1
-        )
-        self.weigh(result.confidence, audio.duration_ms)
-
-    def weigh(self, confidence: float | None, duration_ms: int) -> None:
-        """Confidence for a turn is the mean over its segments weighted by the
-        audio each covered, so one two-word aside cannot drag the number for a
-        minute of clean speech."""
-        if confidence is None or duration_ms <= 0:
-            return
-        self.confidence_sum += confidence * duration_ms
-        self.confidence_ms += duration_ms
-        self.utterance.confidence = self.confidence_sum / self.confidence_ms
 
 
 class SessionPipeline:
@@ -267,7 +174,7 @@ class SessionPipeline:
         self._agreement = LocalAgreement()
         #: The message currently being added to, in the modes that assemble
         #: turns. None between turns, and always None in Live.
-        self._turn: _OpenTurn | None = None
+        self._turn: OpenTurn | None = None
         self._live_partial_id: str | None = None
         self._live_segment_start_ms = 0
         self._pending_mode: LatencyMode | None = None
@@ -540,16 +447,19 @@ class SessionPipeline:
         to the open turn and the utterance republished under its own id, which
         the client applies as an update.
 
-        The order here is embed → recognise → attribute, and the split matters:
-        the prompt handed to the recogniser depends on whether this is the same
-        speaker, so that question has to be answered before recognition, while
-        the answer cannot be *committed* until after — a backend that diarizes
-        for itself has seen the audio in more detail than our clustering can.
+        The order here is diarize → embed → recognise → attribute, and the
+        splits matter. The prompt handed to the recogniser depends on whether
+        this is the same speaker, so that has to be answered before recognition,
+        while the answer cannot be *committed* until after — a backend that
+        diarizes for itself has seen the audio in more detail than we have. And
+        the segment may hold more than one person, so what comes back is cut
+        into runs before any of it becomes a message.
         """
         audio = self._audio_for(segment)
         if audio.samples.size == 0:
             return
 
+        turns = await self._diarize_window(segment)
         embedding, embed_ms = await self._embed(audio)
         context = self._context_for(segment, self._clusterer.nearest(embedding))
 
@@ -563,12 +473,16 @@ class SessionPipeline:
         if merged is None or not merged.text.strip():
             return
 
-        attribution = await self._attribute(embedding, embed_ms, speaker_index=merged.speaker)
-        await self._add_to_turn(
-            merged,
+        runs = self._runs_for(merged, segment, turns)
+        await self._emit_runs(
+            runs,
             audio,
-            segment,
-            attribution,
+            # A window separates the voices inside it and nothing more: its
+            # labels are not the same numbers the next window will use, so
+            # identity has to keep coming from the clusterer.
+            global_labels=False,
+            embedding=embedding,
+            embed_ms=embed_ms,
             timings={"asr_ms": round(asr_ms, 1)},
             latency_from_ms=segment.end_ms,
         )
@@ -592,11 +506,97 @@ class SessionPipeline:
             return ""
         return self._turn.utterance.text
 
+    async def _diarize_window(self, segment: SpeechSegment) -> list[SpeakerSegment]:
+        """Who spoke when, over the recent past.
+
+        Balanced cannot diarize the session, because most of it has not happened
+        yet, so it diarizes a trailing window of it — `diarization_window_ms`.
+        The window is what makes a short interjection attributable at all: an
+        embedder needs about a second of audio before its vector means anything,
+        which "угу" does not have, while a segmentation model reading half a
+        minute around it does not need one.
+        """
+        # The profile's 0 means "this mode diarizes the whole session instead";
+        # the setting's 0 means the operator turned it off. Either disables it.
+        window_ms = min(self.profile.diarization_window_ms, self.settings.diarization.window_ms)
+        if self.diarization is None or window_ms <= 0:
+            return []
+        window = self._cache.slice_ms(
+            max(self._cache.start_ms, segment.end_ms - window_ms), segment.end_ms
+        )
+        if window.duration_ms < 1_000:
+            return []
+        try:
+            return await self.diarization.diarize(
+                window,
+                min_speakers=self.settings.diarization.min_speakers,
+                max_speakers=self.settings.diarization.max_speakers,
+            )
+        except Exception:
+            log.exception("windowed diarization failed", extra={"session": self.session.id})
+            return []
+
+    def _runs_for(
+        self, result: ASRResult, segment: SpeechSegment, turns: Sequence[SpeakerSegment]
+    ) -> list[SpeechRun]:
+        """Cut a recognised segment into runs, and decide whether the first of
+        them may extend the message already open.
+
+        That second question needs both sides compared under *one* labelling,
+        because a window's speaker numbers mean nothing outside it. So this asks
+        the window who was talking when the open turn last had audio, and
+        compares that to who it says is talking now.
+        """
+        runs = split_by_speaker(result, segment, turns)
+        turn = self._turn
+        if not runs or turn is None or not turns:
+            return runs
+        before = assign_speaker(turns, max(0, turn.audio_end_ms - 1_000), turn.audio_end_ms)
+        if before is None or runs[0].speaker is None or before == runs[0].speaker:
+            return runs
+        return [replace(runs[0], continues=False), *runs[1:]]
+
+    async def _emit_runs(
+        self,
+        runs: list[SpeechRun],
+        audio: AudioBuffer,
+        *,
+        global_labels: bool,
+        embedding: Embedding | None = None,
+        embed_ms: float = 0.0,
+        timings: dict[str, float] | None = None,
+        latency_from_ms: int | None = None,
+    ) -> None:
+        """Publish one segment's runs, in order.
+
+        `global_labels` says whether the diarizer's numbers mean anything beyond
+        this call. Whole-session diarization identifies a person for the whole
+        recording, so its answer is used directly; a window only separates the
+        voices inside itself, so there the label says *that* the speaker changed
+        and the embedding says who they are.
+        """
+        alone = len(runs) == 1
+        for run in runs:
+            part = audio if alone else audio.slice_ms(run.segment.start_ms, run.segment.end_ms)
+            vector: Embedding | None
+            if alone and embedding is not None:
+                vector, cost = embedding, embed_ms
+            else:
+                vector, cost = await self._embed(part)
+
+            # A recogniser that diarizes for itself outranks both.
+            speaker_index = run.result.speaker
+            if speaker_index is None and global_labels:
+                speaker_index = run.speaker
+            attribution = await self._attribute(vector, cost, speaker_index=speaker_index)
+            await self._add_to_turn(
+                run, part, attribution, timings=timings, latency_from_ms=latency_from_ms
+            )
+
     async def _add_to_turn(
         self,
-        result: ASRResult,
+        run: SpeechRun,
         audio: AudioBuffer,
-        segment: SpeechSegment,
         attribution: _Attribution,
         *,
         timings: dict[str, float] | None = None,
@@ -605,19 +605,27 @@ class SessionPipeline:
         """Grow the open message, or close it and start the next one."""
         speaker_index = attribution.speaker.index if attribution.speaker else None
         turn = self._turn
-        if turn is not None and self._continues_turn(speaker_index, segment):
-            turn.extend(result, audio, attribution, segment)
-            await self._publish(turn.utterance, latency_from_ms=latency_from_ms)
+        if turn is not None and run.continues and self._continues_turn(speaker_index, run.segment):
+            turn.extend(run.result, audio, run.segment)
+            utterance = turn.utterance
+            # FR-DIA-5: a turn that opened on a segment too short to embed still
+            # needs a vector, or it cannot be renamed retroactively later.
+            if utterance.embedding is None and attribution.embedding is not None:
+                utterance.embedding = attribution.embedding
+            utterance.timings["diarization_ms"] = round(
+                utterance.timings.get("diarization_ms", 0.0) + attribution.diarization_ms, 1
+            )
+            await self._publish(utterance, latency_from_ms=latency_from_ms)
             return
 
         # Someone else started, or the silence ran long. The previous message is
         # over, and only now is its text final enough to translate.
         await self._close_turn()
         utterance = await self._build_utterance(
-            result, audio, timings=timings, attribution=attribution
+            run.result, audio, timings=timings, attribution=attribution
         )
         await self._publish(utterance, latency_from_ms=latency_from_ms)
-        self._turn = _OpenTurn.opened(utterance, speaker_index, result, audio, segment)
+        self._turn = OpenTurn.opened(utterance, speaker_index, run.result, audio, run.segment)
 
     async def _close_turn(self) -> None:
         """Finish the open message. Idempotent, so it is safe wherever a turn
@@ -816,13 +824,10 @@ class SessionPipeline:
             if merged is None or not merged.text.strip():
                 continue
 
-            embedding, embed_ms = await self._embed(audio)
-            attribution = await self._attribute(
-                embedding,
-                embed_ms,
-                speaker_index=merged.speaker if merged.speaker is not None else predicted,
-            )
-            await self._add_to_turn(merged, audio, segment, attribution)
+            # Whole-session labels identify a person for the whole recording, so
+            # unlike Balanced's window this can be trusted for identity too.
+            runs = self._runs_for(merged, segment, diarized)
+            await self._emit_runs(runs, audio, global_labels=True)
 
         await self._close_turn()
 

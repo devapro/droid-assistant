@@ -18,6 +18,8 @@ showed.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import numpy as np
 
 from droid_assistant.backends.asr.base import decoding_prompt
@@ -33,11 +35,13 @@ from droid_assistant.domain import (
     SpeakerSegment,
     StreamConfig,
     Utterance,
+    Word,
     new_id,
     now_ms,
 )
 from droid_assistant.events import EventBus, EventType
-from droid_assistant.pipeline.orchestrator import SessionPipeline, _OpenTurn
+from droid_assistant.pipeline.orchestrator import SessionPipeline
+from droid_assistant.pipeline.turns import OpenTurn, split_by_speaker
 from droid_assistant.pipeline.vad import SpeechSegment, load_vad
 from droid_assistant.store.repository import SessionRecord
 from droid_assistant.store.search import SearchIndex
@@ -79,13 +83,15 @@ class ScriptedASR:
     async def transcribe(self, audio: AudioBuffer, config: StreamConfig) -> list[ASRResult]:
         self.contexts.append(config.context)
         text = self.script.pop(0) if self.script else "и так далее"
+        end_ms = max(audio.start_ms, audio.end_ms - self.undershoot_ms)
         return [
             ASRResult(
                 text=text,
                 start_ms=audio.start_ms,
-                end_ms=max(audio.start_ms, audio.end_ms - self.undershoot_ms),
+                end_ms=end_ms,
                 language="ru",
                 confidence=0.9,
+                words=spread(text, audio.start_ms, end_ms),
             )
         ]
 
@@ -129,6 +135,18 @@ class ScriptedDiarization:
         vector = np.zeros(8, dtype=np.float32)
         vector[voice] = 1.0
         return vector
+
+
+def spread(text: str, start_ms: int, end_ms: int) -> list[Word]:
+    """Word timings laid out evenly, which is all the splitting needs."""
+    tokens = text.split()
+    if not tokens or end_ms <= start_ms:
+        return []
+    step = max(1, (end_ms - start_ms) // len(tokens))
+    return [
+        Word(w=token, start_ms=start_ms + i * step, end_ms=min(end_ms, start_ms + (i + 1) * step))
+        for i, token in enumerate(tokens)
+    ]
 
 
 # --- audio ------------------------------------------------------------------
@@ -252,7 +270,7 @@ def an_open_turn(*, start_ms: int = 0, end_ms: int = 1000, speaker_index: int | 
         end_ms=start_ms + 100,
         text="ну понятно",
     )
-    return _OpenTurn(
+    return OpenTurn(
         utterance=utterance,
         speaker_index=speaker_index,
         audio_start_ms=start_ms,
@@ -514,3 +532,119 @@ class TestDecodingPrompt:
         prompt = decoding_prompt(StreamConfig(context="а" * 400 + " конец"), max_context_chars=20)
         assert prompt.endswith("конец")
         assert len(prompt) == 20
+
+
+# --- one segment, more than one speaker -------------------------------------
+
+
+class TestSplitBySpeaker:
+    RESULT = ASRResult(
+        text="Раз два три, четыре пять!",
+        start_ms=0,
+        end_ms=5_000,
+        language="ru",
+        confidence=0.9,
+        words=spread("раз два три четыре пять", 0, 5_000),
+    )
+    SEGMENT = SpeechSegment(0, 5_000)
+
+    def test_one_voice_keeps_the_recognisers_own_text(self) -> None:
+        """Punctuation and spacing survive, because nothing is rejoined."""
+        runs = split_by_speaker(self.RESULT, self.SEGMENT, [SpeakerSegment(0, 5_000, 3)])
+        assert [run.result.text for run in runs] == ["Раз два три, четыре пять!"]
+        assert [run.speaker for run in runs] == [3]
+        assert runs[0].continues
+
+    def test_a_handover_mid_segment_is_cut_where_it_happens(self) -> None:
+        runs = split_by_speaker(
+            self.RESULT,
+            self.SEGMENT,
+            [SpeakerSegment(0, 3_000, 0), SpeakerSegment(3_000, 5_000, 1)],
+        )
+        assert [run.result.text for run in runs] == ["раз два три", "четыре пять"]
+        assert [run.speaker for run in runs] == [0, 1]
+        # The second voice cannot extend the message the first was building.
+        assert [run.continues for run in runs] == [True, False]
+
+    def test_the_runs_partition_the_segment(self) -> None:
+        """No audio falls between two runs, so the gap arithmetic that joins
+        turns still sees a continuous timeline."""
+        runs = split_by_speaker(
+            self.RESULT,
+            self.SEGMENT,
+            [SpeakerSegment(0, 3_000, 0), SpeakerSegment(3_000, 5_000, 1)],
+        )
+        assert runs[0].segment.start_ms == 0
+        assert runs[0].segment.end_ms == runs[1].segment.start_ms
+        assert runs[-1].segment.end_ms == 5_000
+
+    def test_without_word_timings_there_is_nothing_to_cut_on(self) -> None:
+        """`whisper_cpp` and `gigaam` report no words. They fall back to one run
+        attributed by majority, which is what the pipeline did before."""
+        wordless = replace(self.RESULT, words=[])
+        runs = split_by_speaker(
+            wordless,
+            self.SEGMENT,
+            [SpeakerSegment(0, 3_000, 0), SpeakerSegment(3_000, 5_000, 1)],
+        )
+        assert len(runs) == 1
+        assert runs[0].speaker == 0  # the majority of the segment
+
+    def test_without_diarization_there_is_nothing_to_cut_by(self) -> None:
+        runs = split_by_speaker(self.RESULT, self.SEGMENT, [])
+        assert len(runs) == 1
+        assert runs[0].speaker is None
+
+
+class TestBalancedSpeakerBoundaries:
+    async def test_a_handover_mid_segment_does_not_leak(self, settings, repo) -> None:
+        """The reported bug: VAD hears one segment because nobody paused, and
+        the opening words of the next speaker's sentence end up at the tail of
+        the previous speaker's message."""
+        asr = ScriptedASR(["раз два три четыре пять шесть семь восемь девять десять"])
+        voices = ScriptedDiarization(
+            turns=[SpeakerSegment(0, 7_000, 0), SpeakerSegment(7_000, 10_000, 1)],
+            voices=[0, 0, 1],  # the segment, then each run
+        )
+        pipeline, _ = await run_balanced(settings, repo, asr, voices, endpoints((0, 10_000)))
+        await pipeline._close_turn()
+
+        stored = await repo.list_utterances(pipeline.session.id)
+        assert [u.text for u in stored] == [
+            "раз два три четыре пять шесть семь",
+            "восемь девять десять",
+        ]
+        assert stored[0].speaker_id != stored[1].speaker_id
+
+    async def test_a_short_interjection_is_not_absorbed(self, settings, repo) -> None:
+        """Under a second there is no usable embedding, so identity has to come
+        from the window instead — otherwise someone else's "угу" lands inside
+        the message of whoever was talking."""
+        asr = ScriptedASR(["давай расскажу тебе в общем в чем история", "угу"])
+        voices = ScriptedDiarization(
+            turns=[SpeakerSegment(0, 8_000, 0), SpeakerSegment(8_100, 8_800, 1)],
+            voices=[0, 0, None, None],
+        )
+        pipeline, _ = await run_balanced(
+            settings, repo, asr, voices, endpoints((0, 8_000), (8_200, 8_700))
+        )
+        await pipeline._close_turn()
+
+        stored = await repo.list_utterances(pipeline.session.id)
+        assert [u.text for u in stored] == ["давай расскажу тебе в общем в чем история", "угу"]
+
+    async def test_the_same_speakers_short_aside_is_still_absorbed(self, settings, repo) -> None:
+        """The other half of it: their own "угу" mid-thought must not split the
+        message, which is what the joining exists for."""
+        asr = ScriptedASR(["давай расскажу тебе в общем в чем история", "угу"])
+        voices = ScriptedDiarization(
+            turns=[SpeakerSegment(0, 8_800, 0)],
+            voices=[0, 0, None, None],
+        )
+        pipeline, _ = await run_balanced(
+            settings, repo, asr, voices, endpoints((0, 8_000), (8_200, 8_700))
+        )
+        await pipeline._close_turn()
+
+        stored = await repo.list_utterances(pipeline.session.id)
+        assert [u.text for u in stored] == ["давай расскажу тебе в общем в чем история угу"]

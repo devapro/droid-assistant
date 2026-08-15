@@ -101,6 +101,13 @@ Text is only ever **appended**: nothing already on screen is rewritten, which is
 the property FR-LAT-5 exists for. Live is left alone — LocalAgreement already
 governs how its utterances settle.
 
+**A segment is not one speaker, either.** VAD hears speech and silence, not
+people, so an interruption or a handover mid-sentence comes back as one segment
+holding two voices. Recognised text is therefore cut at the diarizer's speaker
+boundaries, using word timings, before any of it becomes a message. Backends
+without word timings (`whisper_cpp`, `gigaam`) cannot be cut and fall back to
+attributing the whole segment by majority. See `diarization.window_ms`.
+
 Two consequences worth knowing. A message is translated once, when it closes,
 so translations land up to `turn_gap_ms` later than they used to — on whole
 turns, which is also what FR-TRA-3's context exists to get right. And a
@@ -342,6 +349,30 @@ start with any cloud ASR backend, and the UI marks such sessions.
 | `backend` | `"sherpa"` | `sherpa` \| `pyannote` \| `mock`. `pyannote` is more accurate and needs a Hugging Face token plus two gated licence acceptances |
 | `min_speakers` / `max_speakers` | `null` | `null` infers the count (FR-DIA-2). Setting both to the same value pins it, which is the single most effective correction for a known group (FR-DIA-3) |
 | `clustering_threshold` | `0.5` | Lower merges two people into one label; higher fragments one person across several |
+| `window_ms` | `30000` | Balanced only. How much of the recent recording to diarize before recognising each segment. `0` turns it off |
+
+**Why Balanced diarizes a window.** Batch diarizes the whole session at once,
+which is the accurate answer. Balanced cannot — most of the session has not
+happened yet — so before recognising a segment it diarizes the last
+`window_ms` of audio. Two things depend on that and nothing else can supply
+them:
+
+* **whether a segment holds two people**, so the handover can be cut at the
+  right word rather than the whole segment going to whoever spoke most;
+* **whether a short interjection came from someone else.** An embedder needs
+  about a second of audio before its vector means anything, so "угу" cannot be
+  clustered at all — but a segmentation model reading half a minute around it
+  can place it. Without this, a backchannel lands inside the message of
+  whoever happened to be talking.
+
+Identity still comes from embedding clustering, because a window's speaker
+numbers only separate the voices inside that window and are not comparable
+across windows. The window says *that* the speaker changed; the clusterer says
+who they are.
+
+It costs one diarizer pass per utterance, on top of recognition. Set it to `0`
+on a machine that is already struggling to keep up, and attribution falls back
+to embedding clustering alone — at the cost of both behaviours above.
 
 ## `[translation]`
 

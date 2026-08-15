@@ -372,6 +372,13 @@ class DiarizationConfig(BaseModel):
     min_speakers: Annotated[int, Field(ge=1)] | None = None
     max_speakers: Annotated[int, Field(ge=1)] | None = None
     clustering_threshold: Annotated[float, Field(gt=0)] = 0.5
+    # Balanced diarizes a trailing window of the recording before recognising
+    # each segment, which is the only way it can tell that a segment holds two
+    # people, or that a sub-second "угу" came from someone else — an embedder
+    # needs about a second before its vector means anything. It costs one
+    # diarizer pass per utterance; 0 turns it off and leaves attribution to
+    # embedding clustering alone. Batch ignores this and diarizes the session.
+    window_ms: Annotated[int, Field(ge=0)] = 30_000
     segmentation_model: str = "sherpa-onnx-pyannote-segmentation-3-0"
     embedding_model: str = "nemo_en_titanet_small"
 
