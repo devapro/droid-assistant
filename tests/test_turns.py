@@ -56,9 +56,15 @@ class ScriptedASR:
     handed for each call, which is the half of this feature that is otherwise
     invisible from the outside."""
 
-    def __init__(self, script: list[str], *, undershoot_ms: int = 0) -> None:
+    def __init__(
+        self, script: list[str], *, undershoot_ms: int = 0, language: str | None = "ru"
+    ) -> None:
         self.script = list(script)
         self.contexts: list[str] = []
+        #: What the recogniser claims the language is. `None` is the real case
+        #: for `whisper_cpp`, `openai` streaming and `deepgram` when nothing is
+        #: pinned, and it used to mean "translate this anyway".
+        self.language = language
         #: How far short of the audio the recogniser claims its last word ended.
         #: Whisper does this routinely; zero is the unrealistic case.
         self.undershoot_ms = undershoot_ms
@@ -91,7 +97,7 @@ class ScriptedASR:
                 text=text,
                 start_ms=audio.start_ms,
                 end_ms=end_ms,
-                language="ru",
+                language=self.language,
                 confidence=0.9,
                 words=spread(text, audio.start_ms, end_ms),
             )
@@ -779,3 +785,63 @@ class TestBalancedSpeakerBoundaries:
 
         stored = await repo.list_utterances(pipeline.session.id)
         assert [u.text for u in stored] == ["давай расскажу тебе в общем в чем история угу"]
+
+
+class TestWhenTranslationIsSkipped:
+    """FR-TRA-5. An utterance already in the target language costs nothing —
+    no request, no cloud egress, no bill."""
+
+    async def a_session(self, settings, repo, *, source: str, target: str, detected: str | None):
+        record = SessionRecord(
+            id=new_id("sess"),
+            started_at=now_ms(),
+            mode=LatencyMode.BALANCED,
+            source_languages=[source] if isinstance(source, str) else list(source),
+            target_language=target,
+        )
+        await repo.create_session(record)
+        pipeline = SessionPipeline(
+            record,
+            settings,
+            repo,
+            EventBus(),
+            asr=ScriptedASR(SCRIPT, language=detected),
+            diarization=ScriptedDiarization(voices=[0]),  # type: ignore[arg-type]
+            translation=IdentityTranslationBackend(),
+        )
+        await load_vad(pipeline._vad_model)
+        pipeline._cache = AudioBuffer(tone(4_000), start_ms=0)
+        await pipeline._process_segment(SpeechSegment(0, 3_000))
+        return pipeline
+
+    async def test_the_same_language_is_never_sent(self, settings, repo) -> None:
+        pipeline = await self.a_session(settings, repo, source="en", target="en", detected="en")
+        assert pipeline._translation_queue.qsize() == 0
+        assert pipeline._turn is not None
+        assert pipeline._turn.utterance.translation_state == "skipped"
+
+    async def test_a_different_language_is_sent(self, settings, repo) -> None:
+        pipeline = await self.a_session(settings, repo, source="en", target="ru", detected="en")
+        assert pipeline._translation_queue.qsize() == 1
+
+    async def test_a_recogniser_that_reports_no_language_falls_back_to_the_pinned_one(
+        self, settings, repo
+    ) -> None:
+        """`whisper_cpp`, `openai` streaming and `deepgram` can all return None,
+        and an unknown language read as "not the target" — so an English-only
+        session on one of those translated every line from English to English.
+        """
+        pipeline = await self.a_session(settings, repo, source="en", target="en", detected=None)
+        assert pipeline._translation_queue.qsize() == 0
+        assert pipeline._turn is not None
+        assert pipeline._turn.utterance.language == "en"  # …and the row says so
+
+    async def test_several_languages_and_no_detection_still_translates(
+        self, settings, repo
+    ) -> None:
+        """Nothing here can know which language it was, and a missed translation
+        is the worse error of the two."""
+        pipeline = await self.a_session(
+            settings, repo, source=["en", "ru"], target="en", detected=None
+        )
+        assert pipeline._translation_queue.qsize() == 1

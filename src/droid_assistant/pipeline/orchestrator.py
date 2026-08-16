@@ -1014,7 +1014,7 @@ class SessionPipeline:
             start_ms=max(0, result.start_ms),
             end_ms=max(result.start_ms, result.end_ms),
             text=result.text.strip(),
-            language=result.language,
+            language=result.language or self._stream_config.pinned_language,
             speaker_id=attribution.speaker.id if attribution.speaker else None,
             confidence=result.confidence,
             words=list(result.words),
@@ -1090,9 +1090,20 @@ class SessionPipeline:
         self.stats.utterances += 1
 
     def _needs_translation(self, utterance: Utterance) -> bool:
+        """FR-TRA-5: an utterance already in the target language costs nothing.
+
+        The language is the recogniser's, falling back to the one the session
+        pinned — `whisper_cpp`, `openai` streaming and `deepgram` can all report
+        none, and an unknown language reads as "not the target", so an
+        English-only session on one of those translated every line from English
+        into English. Where a session pinned one language, that *is* the answer;
+        where several are offered, nothing here can know, and translating is the
+        safer error of the two.
+        """
         if self.translation is None or not utterance.text.strip():
             return False
-        return not same_language(utterance.language, self.session.target_language)
+        language = utterance.language or self._stream_config.pinned_language
+        return not same_language(language, self.session.target_language)
 
     # --- translation worker -------------------------------------------------
 
