@@ -321,8 +321,11 @@ a reason to believe them. **The baseline to beat is stock `large-v3-turbo`, and
 recorded through the browser client, settles this better than any of the above.
 
 The cloud answer is real here rather than a fallback: `deepgram:nova-3` is the
-only genuinely streaming backend that recognises Serbian, which makes it the
-only way to run Serbian in **Live** mode.
+only cloud backend that recognises Serbian at all, and it recognises it well.
+Live mode is not the reason to reach for it — a Serbian fine-tune runs Live like
+any other local model, because Live re-decodes a sliding window through the same
+`transcribe` call every mode uses. Reach for it when local Serbian accuracy is
+not good enough, or when the machine cannot hold Live's decode rate.
 
 One thing already handled: whichever script a fine-tune emits does not matter,
 because output is normalised to `asr.serbian_script` (FR-ASR-10).
@@ -347,18 +350,22 @@ Used when `asr.backend = "deepgram"`.
 Used when `asr.backend = "openai"`. It reuses the credential the translation and
 plugin features already need, so there is no second account to set up.
 
-Two endpoints sit behind this one backend: Balanced and Batch mode post each
-VAD-closed segment to `/v1/audio/transcriptions`, while Live mode streams over
-the Realtime WebSocket — the only genuinely streaming path of the two.
+Two endpoints sit behind this one backend, but only one of them is reachable
+today. Every mode — Live included — posts to `/v1/audio/transcriptions`, because
+Live is a sliding window over that same call. The Realtime WebSocket client is
+implemented and nothing in the pipeline calls it, so `realtime_model` and
+`realtime_url` currently change nothing; they are kept because wiring Live to a
+native stream is worth doing, and it is the one place that would stop Live
+paying for the same second of audio two or three times.
 
 | Field | Default | Notes |
 |---|---|---|
 | `api_key_env` | `"OPENAI_API_KEY"` | Variable *name*, never a key |
 | `base_url` | OpenAI | Any API-compatible gateway |
-| `model` | `"gpt-4o-transcribe"` | Balanced and Batch mode |
-| `realtime_model` | `"gpt-live-transcribe"` | Live mode |
-| `realtime_url` | Realtime WS | Configurable because the transcription-session query string is not pinned in the published API |
-| `realtime_delay` | `"low"` | `minimal` \| `low` \| `medium` \| `high` \| `xhigh` — the provider's own latency dial |
+| `model` | `"gpt-4o-transcribe"` | Every mode, Live included |
+| `realtime_model` | `"gpt-live-transcribe"` | **Unused** until Live is wired to the Realtime path |
+| `realtime_url` | Realtime WS | **Unused.** Configurable because the transcription-session query string is not pinned in the published API |
+| `realtime_delay` | `"low"` | **Unused.** `minimal` \| `low` \| `medium` \| `high` \| `xhigh` — the provider's own latency dial |
 | `prompt` | `""` | Standing steering text, combined with the per-session vocabulary |
 | `price_per_minute_usd` | published rates | Per-model table, used only to *report* spend |
 | `fallback_price_per_minute_usd` | `0.006` | Used for a model absent from the table, so an unknown model reports something rather than nothing |

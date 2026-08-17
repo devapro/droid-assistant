@@ -163,6 +163,7 @@ export const en = {
     capture: 'Capture',
     backends: 'Backends',
     plugins: 'Plugins',
+    prompts: 'Prompts',
     server: 'Server',
     source: 'Capture from',
     sourceMicrophone: 'Microphone',
@@ -180,7 +181,7 @@ export const en = {
     languages: 'Languages',
     targetLanguage: 'Translate into',
     mode: 'Latency mode',
-    needsStreamingBackend: 'needs a streaming recogniser',
+    redecodesWindow: 're-recognises continuously — needs a fast machine',
     audioProcessing: 'Browser audio processing',
     echoCancellation: 'Echo cancellation',
     noiseSuppression: 'Noise suppression',
@@ -230,6 +231,31 @@ export const en = {
     themeSystem: 'Match device',
     themeLight: 'Light',
     themeDark: 'Dark',
+  },
+
+  prompts: {
+    title: 'Prompts',
+    help: 'Your own instructions for generating a summary. Write one here, then pick it beside the Generate button — the built-in prompt stays available and is what an unnamed run uses.',
+    newPrompt: 'New prompt',
+    namePlaceholder: 'Name it — “Customer call”, “Standup”',
+    instructionsLabel: 'Instructions',
+    instructionsPlaceholder:
+      'Summarise this call for the account team. Lead with what the customer asked for, then what we committed to, then anything left open. Quote figures exactly.',
+    instructionsHelp:
+      'This replaces the built-in style, headings, and output language. What it cannot switch off is the instruction not to invent anything the transcript does not support, and the word ceiling in the plugin’s own settings.',
+    empty: 'No prompts yet.',
+    emptyAction: 'Add one, and it appears beside every Generate button.',
+    delete: 'Delete',
+    deleteTitle: 'Delete this prompt?',
+    deleteDetail:
+      'Summaries already generated with it are kept, and go on naming it. This only removes the instructions.',
+    unnamed: 'Untitled prompt',
+    needsName: 'Give the prompt a name.',
+    needsInstructions: 'Write the instructions the summary should follow.',
+    saved: 'Saved',
+    builtIn: 'Built-in prompt',
+    usedFor: (name: string) => `Prompt: ${name}`,
+    selectorLabel: 'Prompt',
   },
 
   presets: {

@@ -229,6 +229,10 @@ class ASRCapabilities:
     rather than mid-session (SRS §5.6)."""
 
     name: str
+    #: The backend has a native streaming API (`start_stream`). Reported, not
+    #: required: Live is built on `transcribe` like every other mode, so this
+    #: gates nothing. It once gated Live, which locked every local backend out
+    #: of a mode they were already capable of serving.
     streaming: bool
     languages: frozenset[str] | None  # None ⇒ open set / unknown
     word_timestamps: bool

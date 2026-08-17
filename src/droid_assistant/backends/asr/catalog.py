@@ -157,7 +157,7 @@ CATALOG: tuple[ModelSpec, ...] = (
         NOVA_2_LANGUAGES,
         0,
         local=False,
-        note="Deepgram, genuinely streaming; no Serbian",
+        note="Deepgram; fast and accurate, but no Serbian",
     ),
     ModelSpec(
         "deepgram",
@@ -165,7 +165,7 @@ CATALOG: tuple[ModelSpec, ...] = (
         NOVA_3_LANGUAGES,
         0,
         local=False,
-        note="Deepgram, genuinely streaming; the Deepgram model that has Serbian",
+        note="Deepgram; the one cloud model that has Serbian",
     ),
 )
 

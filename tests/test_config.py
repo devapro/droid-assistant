@@ -123,17 +123,29 @@ class TestLocalOnly:
 
 
 class TestBackendValidation:
-    def test_live_mode_with_a_batch_backend_is_an_error(self) -> None:
-        """SRS §5.6: `capabilities` is what turns this from a forty-minute
-        surprise into a startup error."""
+    def test_live_mode_with_a_batch_backend_is_allowed(self) -> None:
+        """Live is built on `transcribe` like every other mode (LocalAgreement-2
+        over a sliding window), so a backend without a streaming API can serve
+        it. Refusing it here locked every local recogniser out of a mode the
+        pipeline had been running on them all along."""
         from droid_assistant.backends import registry
         from droid_assistant.backends.asr.mock import MockASRBackend
         from droid_assistant.domain import LatencyMode
 
         backend = MockASRBackend(streaming=False)
         report = registry.validate(Settings(), backend, LatencyMode.LIVE)  # type: ignore[arg-type]
-        assert not report.ok
-        assert "streaming" in report.errors[0]
+        assert report.ok
+
+    def test_live_mode_says_what_it_will_cost(self) -> None:
+        """Slow is not impossible, but it is worth saying out loud: the window is
+        decoded again every step, which is the load R2 exists to measure."""
+        from droid_assistant.backends import registry
+        from droid_assistant.backends.asr.mock import MockASRBackend
+        from droid_assistant.domain import LatencyMode
+
+        backend = MockASRBackend(streaming=False)
+        report = registry.validate(Settings(), backend, LatencyMode.LIVE)  # type: ignore[arg-type]
+        assert any("re-decodes" in warning for warning in report.warnings)
 
     def test_local_only_with_a_cloud_backend_is_an_error(self) -> None:
         """C-4: raw audio must never leave the server unless explicitly enabled."""

@@ -289,6 +289,7 @@ Priority follows MoSCoW: **M**ust, **S**hould, **C**ould, **W**on't (this releas
 | FR-PLG-11 | M | v1 | An **action items** plugin shall ship as a reference implementation | It produces action items with text and, where identifiable, owner and due date |
 | FR-PLG-12 | S | v1 | Artifacts shall be versioned; re-running shall not destroy prior output | After two runs both versions are retrievable and the current one is indicated |
 | FR-PLG-13 | C | v2 | Outbound webhooks shall let non-Python consumers subscribe to events | A configured webhook receives a signed POST for each subscribed event |
+| FR-PLG-14 | S | v1 | Named prompts shall be saved by the operator and chosen per run, replacing a plugin's own instructions where the plugin declares it accepts one | A prompt written in Settings is offered beside the Generate button; a run naming it produces a summary following it, records the prompt's name on the artifact, and leaves the anti-fabrication system prompt and the length ceiling in force |
 
 ### 3.9 User interface
 
@@ -589,7 +590,9 @@ Selecting a match opens the session **scrolled to that utterance**, not to the t
 
 #### Screen 4 — Settings
 
-Grouped by what the operator is actually deciding: **Capture** (default device, language list, target language, default latency mode, browser audio processing), **Backends** (ASR, translation, LLM, with the active model and reachability shown), **Plugins** (enable, configure — forms rendered from each plugin's declared schema, FR-PLG-5), and **Server** (storage location and usage, disk headroom, model status, health).
+Grouped by what the operator is actually deciding: **Capture** (default device, language list, target language, default latency mode, browser audio processing), **Backends** (ASR, translation, LLM, with the active model and reachability shown), **Plugins** (enable, configure — forms rendered from each plugin's declared schema, FR-PLG-5), **Prompts** (named instructions to generate an artifact with, FR-PLG-14), and **Server** (storage location and usage, disk headroom, model status, health).
+
+Prompts are a section rather than a plugin setting because they are not one value: several are correct at once — a customer call and a standup want different summaries — and which one applies is a decision about the recording in front of the operator. So they are written here and chosen beside the button that spends the call, and the plugin's built-in instructions remain what an unnamed run uses.
 
 Settings that cannot take effect until the next session say so rather than appearing to apply immediately.
 
@@ -629,9 +632,15 @@ PATCH  /api/speakers/{id}               → rename a speaker
 
 GET    /api/sessions/{id}/artifacts     → plugin outputs, all versions
 POST   /api/sessions/{id}/plugins/{name}/run → re-run a plugin
+                                          {utterance_ids[]?, prompt_id?} — part of the
+                                          session, and which saved prompt to use
 
 GET    /api/plugins                     → installed plugins, status, config schema
 PATCH  /api/plugins/{name}              → enable/disable, update config
+
+GET    /api/prompts                     → saved prompts, most recently used first
+PUT    /api/prompts                     → create or rewrite one {id?, name, instructions}
+DELETE /api/prompts/{id}                → remove one; artifacts it produced are kept
 
 GET    /api/search?q=...&mode=fts|semantic → cross-session search
 GET    /api/sessions/{id}/export?format=md|json|srt|vtt
@@ -739,7 +748,9 @@ class TranslationBackend(Protocol):
     async def translate(self, text: str, src: str, dst: str, context: list[str]) -> str: ...
 ```
 
-`capabilities` is what lets the server refuse an impossible configuration at startup rather than failing mid-session — for example, selecting Live mode with a non-streaming backend.
+`capabilities` is what lets the server refuse an impossible configuration at startup rather than failing mid-session — for example, cloud ASR while `privacy.local_only` is on, or a single-language model offered a language it will confidently mistranscribe rather than reject.
+
+Live mode is deliberately *not* among those refusals. Every mode is built on `transcribe`; Live re-runs it over a sliding window (§5.4, LocalAgreement-2), so a backend needs no `start_stream` to serve it — only enough speed, which is a matter of degree and belongs in a warning rather than a veto. Reading `streaming` as a Live prerequisite locked every local backend out of the mode the sliding window exists to give them.
 
 ### 5.7 Audio transport
 
@@ -769,6 +780,8 @@ artifacts     (id, session_id, plugin_name, plugin_version, kind, mime,
                content, version, created_at, superseded_by)
 
 plugin_state  (plugin_name, enabled, config_json, last_error, last_error_at)
+
+prompts       (id, name, instructions, created_at, updated_at, last_used_at)  -- FR-PLG-14
 
 ingest_tokens (token, session_id, issued_at, expires_at, revoked_at)
 

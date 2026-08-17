@@ -8,9 +8,14 @@
  * Plugin forms are generated from each plugin's declared JSON schema (FR-PLG-5),
  * so a third-party plugin gets a correctly-typed settings form without shipping
  * any UI code.
+ *
+ * **Prompts** are a section of their own rather than a plugin setting (FR-PLG-14).
+ * A setting has one value; the point of a prompt is that several are right at
+ * once and the choice belongs to the recording in front of you — so they are
+ * written here and chosen where the work is asked for.
  */
 
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import {
   api,
   type Health,
@@ -18,14 +23,16 @@ import {
   type ModelInfo,
   type ModelsResponse,
   type PluginInfo,
+  type Prompt,
 } from '../api/client'
 import { listInputDevices, type DeviceInfo } from '../capture/recorder'
 import { sourceSupport, type CaptureSource } from '../capture/sources'
-import { Button, EmptyState, Pill } from '../components/primitives'
+import { ConfirmDialog } from '../components/ConfirmDialog'
+import { Button, EmptyState, Pill, relativeDate } from '../components/primitives'
 import { t } from '../i18n'
 import { useRecording } from '../state/recording'
 
-type Section = 'capture' | 'models' | 'backends' | 'plugins' | 'server'
+type Section = 'capture' | 'models' | 'backends' | 'plugins' | 'prompts' | 'server'
 
 export function Settings() {
   const strings = t()
@@ -64,6 +71,7 @@ export function Settings() {
     ['models', strings.settings.models],
     ['backends', strings.settings.backends],
     ['plugins', strings.settings.plugins],
+    ['prompts', strings.settings.prompts],
     ['server', strings.settings.server],
   ]
 
@@ -106,6 +114,7 @@ export function Settings() {
         {section === 'plugins' && (
           <PluginsSection plugins={plugins} trustNotice={trustNotice} onChanged={refresh} />
         )}
+        {section === 'prompts' && <PromptsSection />}
         {section === 'server' && <ServerSection health={health} />}
       </div>
     </div>
@@ -485,7 +494,10 @@ function BackendsSection({
         title="Speech recognition"
         name={health.backends.asr.name}
         local={health.backends.asr.local}
-        extra={health.backends.asr.streaming ? 'streaming' : 'batch only — Live mode unavailable'}
+        // All three modes run on this backend either way; what the native
+        // stream would buy is a Live mode that decodes each second of audio
+        // once instead of two or three times.
+        extra={health.backends.asr.streaming ? 'native streaming' : 'batch, re-decoded for Live'}
       />
       <BackendCard
         title="Diarization"
@@ -743,6 +755,219 @@ function SchemaField({
       />
       {schema.description && <span className="text-fg-dim text-xs">{schema.description}</span>}
     </label>
+  )
+}
+
+/** A prompt as this screen holds it: saved ones carry an `id`, a new one does not. */
+type PromptDraft = { key: string; id?: string; name: string; instructions: string }
+
+const asDraft = (prompt: Prompt): PromptDraft => ({
+  key: prompt.id,
+  id: prompt.id,
+  name: prompt.name,
+  instructions: prompt.instructions,
+})
+
+/**
+ * Prompts (FR-PLG-14) — write the instructions once, choose them per recording.
+ *
+ * The built-in prompt is never one of the rows, and deliberately: it cannot be
+ * edited or deleted, and showing it as an entry that refuses both would invite
+ * exactly that. It is offered as an option in the picker instead, which is where
+ * the choice between it and one of these is actually made.
+ */
+function PromptsSection() {
+  const strings = t()
+  const [entries, setEntries] = useState<PromptDraft[] | null>(null)
+  const [lastUsed, setLastUsed] = useState<Record<string, number | null>>({})
+  const [error, setError] = useState<string | null>(null)
+  const [pendingDelete, setPendingDelete] = useState<PromptDraft | null>(null)
+  const [drafts, setDrafts] = useState(0)
+
+  const load = useCallback(async () => {
+    try {
+      const body = await api.prompts()
+      setLastUsed(Object.fromEntries(body.prompts.map((p) => [p.id, p.last_used_at])))
+      // Unsaved drafts survive a reload: one is typically open *because* the
+      // reload was triggered by saving a different card.
+      setEntries((current) => [
+        ...body.prompts.map(asDraft),
+        ...(current ?? []).filter((entry) => !entry.id),
+      ])
+      setError(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : strings.errors.generic)
+    }
+  }, [strings.errors.generic])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const remove = async (entry: PromptDraft) => {
+    setPendingDelete(null)
+    if (!entry.id) {
+      setEntries((current) => (current ?? []).filter((row) => row.key !== entry.key))
+      return
+    }
+    try {
+      await api.deletePrompt(entry.id)
+      setEntries((current) => (current ?? []).filter((row) => row.key !== entry.key))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : strings.errors.generic)
+    }
+  }
+
+  const addDraft = () => {
+    const key = `draft-${drafts}`
+    setDrafts(drafts + 1)
+    setEntries((current) => [...(current ?? []), { key, name: '', instructions: '' }])
+  }
+
+  if (entries === null) {
+    return error ? (
+      <p className="text-danger text-sm">{error}</p>
+    ) : (
+      <p className="text-fg-dim text-sm">{strings.common.loading}</p>
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-4">
+      <p className="text-fg-dim text-sm">{strings.prompts.help}</p>
+      {error && <p className="text-danger text-sm">{error}</p>}
+
+      {entries.length === 0 ? (
+        <EmptyState title={strings.prompts.empty} action={strings.prompts.emptyAction} />
+      ) : (
+        entries.map((entry) => (
+          <PromptCard
+            key={entry.key}
+            entry={entry}
+            lastUsedAt={entry.id ? (lastUsed[entry.id] ?? null) : null}
+            onSaved={load}
+            onDelete={() => (entry.id ? setPendingDelete(entry) : void remove(entry))}
+          />
+        ))
+      )}
+
+      <div>
+        <Button onClick={addDraft}>{strings.prompts.newPrompt}</Button>
+      </div>
+
+      {/* The same dialog the history list uses, so deleting something means the
+          same thing wherever it is reached from. */}
+      {pendingDelete && (
+        <ConfirmDialog
+          title={strings.prompts.deleteTitle}
+          subject={pendingDelete.name || strings.prompts.unnamed}
+          detail={strings.prompts.deleteDetail}
+          confirmLabel={strings.prompts.delete}
+          onConfirm={() => void remove(pendingDelete)}
+          onCancel={() => setPendingDelete(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+function PromptCard({
+  entry,
+  lastUsedAt,
+  onSaved,
+  onDelete,
+}: {
+  entry: PromptDraft
+  lastUsedAt: number | null
+  onSaved: () => Promise<void>
+  onDelete: () => void
+}) {
+  const strings = t()
+  const [name, setName] = useState(entry.name)
+  const [instructions, setInstructions] = useState(entry.instructions)
+  const [error, setError] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  // A new card is dirty from the moment it exists: there is nothing saved to
+  // compare it against, and hiding Save until a keystroke reads as no button.
+  const dirty = !entry.id || name !== entry.name || instructions !== entry.instructions
+
+  const save = async () => {
+    // Checked here rather than only by the server, because both of these are
+    // things the person typing can see and fix without a round trip.
+    if (!name.trim()) return setError(strings.prompts.needsName)
+    if (!instructions.trim()) return setError(strings.prompts.needsInstructions)
+    setSaving(true)
+    try {
+      await api.savePrompt({
+        ...(entry.id ? { id: entry.id } : {}),
+        name: name.trim(),
+        instructions,
+      })
+      setError(null)
+      setSaved(true)
+      window.setTimeout(() => setSaved(false), 2000)
+      await onSaved()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : strings.errors.generic)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div
+      // Identified in the markup, so a test — or a bug report — can name one
+      // card among several rather than counting from the top of a list whose
+      // order is most-recently-used.
+      data-prompt={entry.id ?? 'new'}
+      className="border-line bg-surface-2 flex flex-col gap-2 rounded-xl border p-3"
+    >
+      <div className="flex items-center gap-2">
+        <input
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+          placeholder={strings.prompts.namePlaceholder}
+          aria-label={strings.prompts.namePlaceholder}
+          className="bg-surface-1 border-line min-w-0 flex-1 rounded-lg border px-2 py-1.5 text-sm font-medium"
+        />
+        <button
+          type="button"
+          onClick={onDelete}
+          className="hover:bg-danger/15 text-danger rounded-lg px-2 py-1.5 text-sm"
+        >
+          {strings.prompts.delete}
+        </button>
+      </div>
+
+      <label className="flex flex-col gap-1 text-sm">
+        <span className="text-fg-dim text-xs">{strings.prompts.instructionsLabel}</span>
+        <textarea
+          value={instructions}
+          onChange={(event) => setInstructions(event.target.value)}
+          placeholder={strings.prompts.instructionsPlaceholder}
+          rows={6}
+          className="bg-surface-1 border-line w-full rounded-lg border px-2 py-1.5 text-sm"
+        />
+      </label>
+      <p className="text-fg-dim text-xs">{strings.prompts.instructionsHelp}</p>
+
+      <div className="flex items-center gap-2">
+        {dirty && (
+          <Button onClick={() => void save()} disabled={saving}>
+            {strings.common.save}
+          </Button>
+        )}
+        {saved && !dirty && <span className="text-fg-dim text-xs">{strings.prompts.saved}</span>}
+        {!dirty && lastUsedAt && (
+          <span className="text-fg-dim text-xs">
+            {strings.presets.lastUsed} {relativeDate(lastUsedAt)}
+          </span>
+        )}
+        {error && <span className="text-danger text-xs">{error}</span>}
+      </div>
+    </div>
   )
 }
 

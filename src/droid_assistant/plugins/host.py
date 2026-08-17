@@ -36,7 +36,7 @@ from pydantic import ValidationError
 from .. import PLUGIN_API_VERSION
 from ..domain import Artifact
 from ..events import EventBus, EventType
-from .api import Context, Event, Plugin
+from .api import Context, Event, Plugin, Prompt
 
 log = logging.getLogger(__name__)
 
@@ -80,6 +80,7 @@ class LoadedPlugin:
             "subscribes": sorted(str(e) for e in self.instance.subscribes),
             "requires_llm": self.instance.requires_llm,
             "on_demand": self.instance.on_demand,
+            "accepts_prompt": self.instance.accepts_prompt,
             "config": self.config,
             "config_schema": self.instance.config_json_schema(),
             "last_error": self.last_error,
@@ -182,6 +183,9 @@ class _Job:
     #: Only ever set by an on-demand run the operator asked for. Dispatched
     #: events always cover the whole session.
     utterance_ids: tuple[str, ...] | None = None
+    #: Likewise: a saved prompt is something a person chose for this run, so a
+    #: dispatched event never carries one (FR-PLG-14).
+    prompt: Prompt | None = None
 
 
 class PluginHost:
@@ -325,7 +329,12 @@ class PluginHost:
                 )
 
     async def run_now(
-        self, name: str, session_id: str, *, utterance_ids: Sequence[str] | None = None
+        self,
+        name: str,
+        session_id: str,
+        *,
+        utterance_ids: Sequence[str] | None = None,
+        prompt: Prompt | None = None,
     ) -> tuple[dict[str, Any] | None, str | None]:
         """Re-run one plugin's `session.end` handler over the current transcript.
 
@@ -337,10 +346,21 @@ class PluginHost:
         item out of this line". The event stays `session.end` because that is
         where a plugin's summarising work already lives — what changes is how
         much of the session the handler is looking at, not which handler runs.
+
+        `prompt` replaces the plugin's own instructions for this run alone
+        (FR-PLG-14) — nothing is persisted, so the next run is unaffected. It is
+        dropped for a plugin that does not declare `accepts_prompt`: passing it
+        anyway would let a caller believe the choice had taken effect.
         """
         plugin = self.plugins.get(name)
         if plugin is None:
             raise KeyError(name)
+        if prompt is not None and not plugin.instance.accepts_prompt:
+            log.info(
+                "ignoring a prompt for a plugin that does not accept one",
+                extra={"plugin": name, "prompt": prompt.name},
+            )
+            prompt = None
         plugin.failed_sessions.discard(session_id)
         declined: list[str] = []
         artifact = await self._invoke(
@@ -350,6 +370,7 @@ class PluginHost:
                 session_id,
                 {"reason": "manual"},
                 utterance_ids=tuple(utterance_ids) if utterance_ids is not None else None,
+                prompt=prompt,
             ),
             raise_errors=True,
             declined=declined,
@@ -411,6 +432,7 @@ class PluginHost:
             logger=logging.getLogger(f"droid_assistant.plugins.{plugin.name}"),
             event=job.event,
             payload=job.payload,
+            prompt=job.prompt,
             utterance_ids=job.utterance_ids,
             _emit=emit,
         )

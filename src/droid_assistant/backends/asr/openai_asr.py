@@ -2,10 +2,12 @@
 
 One backend, two endpoints, because OpenAI splits the job in two:
 
-* **`/v1/audio/transcriptions`** takes a complete audio file. Balanced and Batch
-  mode use it, one request per VAD-closed segment.
-* **The Realtime WebSocket** takes a live PCM stream and emits deltas. Live mode
-  uses it, and it is the only genuinely streaming path of the two.
+* **`/v1/audio/transcriptions`** takes a complete audio file. Every mode uses
+  it: Balanced and Batch once per VAD-closed segment, Live once per window step
+  as `pipeline/localagreement.py` slides its window forward.
+* **The Realtime WebSocket** takes a live PCM stream and emits deltas. It is
+  implemented below and nothing calls it — wiring Live to it is what would end
+  Live's habit of re-uploading the same seconds of audio.
 
 Why this exists alongside Deepgram: it is the same credential the translation
 and plugin features already need, so an operator who has set `OPENAI_API_KEY`
@@ -73,8 +75,8 @@ class OpenAIASRBackend(ASRBackend):
         model = self._config.model
         return ASRCapabilities(
             name=f"openai:{model}",
-            # Live mode goes through the Realtime endpoint, which is streaming
-            # whatever the batch model is.
+            # The Realtime endpoint exists whatever the batch model is, so this
+            # backend has a native stream. Reported only: no mode requires one.
             streaming=True,
             languages=None,  # provider-side; validated by the API, not by us
             word_timestamps=model in OPENAI_TIMESTAMP_MODELS,

@@ -5,9 +5,17 @@ backend is one entry here plus one module — and swapping one is a config chang
 with no code change (FR-ASR-1, FR-DIA-6, FR-CFG-8).
 
 `validate()` runs before the server accepts a connection. It uses the declared
-capabilities to reject configurations that cannot work — Live mode with a
-batch-only backend, cloud ASR while local-only is on — so the failure is a
-startup message rather than a broken session (SRS §5.6).
+capabilities to reject configurations that cannot work — cloud ASR while
+local-only is on, a single-language model offered speech it will confidently
+mistranscribe — so the failure is a startup message rather than a broken session
+(SRS §5.6).
+
+It is deliberately narrow about what "cannot work" means. It used to refuse Live
+mode to any backend declaring `streaming=False`, which was every local one; the
+pipeline had meanwhile been running Live on exactly those backends by
+re-decoding a window (`pipeline/localagreement.py`), so the check was rejecting
+a configuration that works. Slow is not impossible, and the cost of getting that
+distinction wrong is a mode nobody can reach.
 """
 
 from __future__ import annotations
@@ -201,11 +209,32 @@ def validate(
     caps = asr.capabilities
     mode = requested_mode or settings.capture.default_mode
 
-    if mode is LatencyMode.LIVE and not caps.streaming:
-        report.errors.append(
-            f"Live mode needs a streaming ASR backend, and {caps.name} is batch-only. "
-            "Use Balanced or Batch mode, or set asr.backend = 'deepgram'."
-        )
+    if mode is LatencyMode.LIVE:
+        # Live has never needed a streaming backend, whatever this check used to
+        # say. The pipeline drives it by re-decoding a sliding window through
+        # `transcribe()` and committing what two hypotheses agree on
+        # (LocalAgreement-2) — the same call every other mode makes, so every
+        # backend can serve it. What Live needs is headroom, not an API.
+        #
+        # Imported here rather than at module scope: `pipeline` imports this
+        # package, so the cycle only stays broken while this stays local.
+        from ..pipeline.modes import LIVE
+
+        window_s = LIVE.window_max_ms // 1000
+        if caps.local:
+            report.warnings.append(
+                f"Live mode re-decodes a window of up to {window_s} s every "
+                f"{LIVE.window_step_ms} ms, on top of the final decode of every segment. "
+                f"Check that {caps.name} keeps up on this machine (SRS R2): recognition that "
+                "falls behind does not catch up, and Balanced is the mode that scales down."
+            )
+        else:
+            report.warnings.append(
+                f"Live mode re-decodes a window of up to {window_s} s every "
+                f"{LIVE.window_step_ms} ms, which against {caps.name} is a request that often — "
+                "the audio billed for a session exceeds its length, and the estimate in the UI "
+                "counts it honestly."
+            )
 
     if not caps.local:
         if settings.privacy.local_only:

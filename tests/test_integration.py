@@ -442,15 +442,16 @@ class TestModeSwitching:
         assert len(after["utterances"]) >= before  # nothing committed was lost
         assert after["mode"] == "batch"
 
-    def test_live_mode_is_refused_with_a_batch_only_backend(
+    def test_live_mode_is_offered_with_a_batch_only_backend(
         self, services: Services, client
     ) -> None:
-        """SRS §5.6: an impossible configuration fails at the boundary, not
-        forty minutes into a meeting."""
+        """The mode a local recogniser can actually serve is the one it used to
+        be refused. Live decodes a sliding window through `transcribe`, so the
+        absence of a streaming API is not a reason to turn the session away."""
         services.asr.streaming = False  # the mock backend declares its own capability
         response = client.post("/api/sessions", json={"languages": ["en"], "mode": "live"})
-        assert response.status_code == 409
-        assert "streaming" in response.json()["error"].lower()
+        assert response.status_code == 201
+        assert response.json()["session"]["mode"] == "live"
 
 
 class TestPresets:
@@ -470,6 +471,87 @@ class TestPresets:
         client.post(f"/api/sessions/{created['session_id']}/stop")
 
         assert client.delete(f"/api/presets/{saved['id']}").status_code == 204
+
+
+class TestPrompts:
+    """FR-PLG-14: saved instructions, written once and chosen per recording."""
+
+    def test_round_trip(self, client) -> None:
+        saved = client.put(
+            "/api/prompts",
+            json={"name": "Customer call", "instructions": "Lead with the ask, then the promise."},
+        ).json()
+        assert saved["name"] == "Customer call"
+        assert saved["last_used_at"] is None
+
+        listed = client.get("/api/prompts").json()["prompts"]
+        assert [p["name"] for p in listed] == ["Customer call"]
+
+        # An id means "this prompt, whatever it is now called" — how renaming
+        # works, and what stops a rename filing a second copy.
+        renamed = client.put(
+            "/api/prompts",
+            json={"id": saved["id"], "name": "Support call", "instructions": "Same, shorter."},
+        ).json()
+        assert renamed["id"] == saved["id"]
+        assert renamed["name"] == "Support call"
+        assert len(client.get("/api/prompts").json()["prompts"]) == 1
+
+        assert client.delete(f"/api/prompts/{saved['id']}").status_code == 204
+        assert client.get("/api/prompts").json()["prompts"] == []
+
+    def test_saving_a_name_that_exists_edits_it_rather_than_duplicating(self, client) -> None:
+        """Without an id the name is the identity. Two prompts called "Standup"
+        are indistinguishable in the picker, which is the only place they are
+        ever seen."""
+        client.put("/api/prompts", json={"name": "Standup", "instructions": "first"})
+        client.put("/api/prompts", json={"name": "Standup", "instructions": "second"})
+        prompts = client.get("/api/prompts").json()["prompts"]
+        assert len(prompts) == 1
+        assert prompts[0]["instructions"] == "second"
+
+    def test_a_name_belonging_to_another_prompt_is_refused(self, client) -> None:
+        """Renaming one onto another's name would silently discard one of them."""
+        first = client.put("/api/prompts", json={"name": "A", "instructions": "x"}).json()
+        client.put("/api/prompts", json={"name": "B", "instructions": "y"})
+        clash = client.put(
+            "/api/prompts", json={"id": first["id"], "name": "B", "instructions": "x"}
+        )
+        assert clash.status_code == 409
+        assert "already called" in clash.json()["error"]
+
+    def test_an_empty_prompt_is_refused(self, client) -> None:
+        assert (
+            client.put("/api/prompts", json={"name": "Empty", "instructions": ""}).status_code
+            == 422
+        )
+        assert (
+            client.put("/api/prompts", json={"name": " ", "instructions": "x"}).status_code == 422
+        )
+
+    def test_a_run_naming_an_unknown_prompt_is_refused(self, client) -> None:
+        """Not quietly run with the built-in one: that returns a perfectly good
+        summary which is not the one that was asked for."""
+        created = client.post("/api/sessions", json={"languages": ["en"]}).json()
+        session_id = created["session_id"]
+        with client.websocket_connect(f"/ws/ingest?token={created['ingest_token']}") as websocket:
+            websocket.receive_json()
+            stream_audio(websocket, conversation())
+        client.post(f"/api/sessions/{session_id}/stop")
+
+        refused = client.post(
+            f"/api/sessions/{session_id}/plugins/summary/run", json={"prompt_id": "prm_nope"}
+        )
+        assert refused.status_code == 404
+        assert "prm_nope" in refused.json()["error"]
+
+    def test_the_listing_says_the_summary_plugin_accepts_one(self, client) -> None:
+        """What the UI shows the picker on."""
+        plugins = {
+            p["name"]: p["accepts_prompt"] for p in client.get("/api/plugins").json()["plugins"]
+        }
+        assert plugins["summary"] is True
+        assert plugins["action_items"] is False
 
 
 class TestDiskGuard:

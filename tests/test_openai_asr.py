@@ -90,9 +90,10 @@ class TestCapabilities:
         assert backend(model="gpt-4o-transcribe").capabilities.word_timestamps is False
         assert backend(model="gpt-4o-mini-transcribe").capabilities.word_timestamps is False
 
-    def test_streaming_is_offered_because_realtime_exists(self) -> None:
-        # Live mode goes through the Realtime endpoint whatever the batch model
-        # is, so the backend as a whole is streaming (FR-LAT-1).
+    def test_streaming_is_reported_because_realtime_exists(self) -> None:
+        # The Realtime endpoint exists whatever the batch model is. Nothing in
+        # the pipeline opens it yet, so this is a description of the backend and
+        # not a claim about which modes are available.
         assert backend().capabilities.streaming is True
 
     def test_it_is_honest_about_leaving_the_machine(self) -> None:
@@ -279,6 +280,9 @@ class TestRegistry:
         assert "local_only" in report.errors[0]
 
     def test_live_mode_is_permitted_with_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """True of every backend now, not just this one — Live runs on
+        `transcribe`. Kept because this backend is where the two-endpoint split
+        makes it tempting to gate the mode on the endpoint again."""
         from droid_assistant.backends import registry
         from droid_assistant.domain import LatencyMode
 

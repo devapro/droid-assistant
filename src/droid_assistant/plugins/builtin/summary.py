@@ -10,6 +10,14 @@ call, and most recordings are never read a second time. Spending that
 automatically bills for summaries nobody asked for and — where the credential is
 a cloud one — sends every conversation to a provider as a matter of course. So
 the Summary tab offers a button instead, and the decision is made per recording.
+
+**The instructions are replaceable** (FR-PLG-14). `style` offers three shapes,
+which covers the common cases and none of the specific ones: a support call, a
+one-to-one, and a design review want different summaries, and no enum of ours is
+going to guess them. A saved prompt takes the place of that block for one run.
+What it does *not* replace is `SYSTEM`, because that is not a matter of taste —
+it is what stops a summary inventing a decision the meeting never made, and a
+custom prompt is no reason to drop the guard.
 """
 
 from __future__ import annotations
@@ -32,7 +40,7 @@ class SummaryConfig(BaseModel):
 
     style: str = Field(
         default="bullets",
-        description="bullets, prose, or minutes",
+        description="bullets, prose, or minutes — ignored when a saved prompt is chosen",
         json_schema_extra={"enum": ["bullets", "prose", "minutes"]},
     )
     max_words: int = Field(default=400, ge=50, le=2000, description="Length ceiling")
@@ -68,6 +76,7 @@ class SummaryPlugin(Plugin):
     subscribes = {Event.SESSION_END}
     requires_llm = True
     on_demand = True  # …see the module docstring
+    accepts_prompt = True  # FR-PLG-14
 
     async def on_session_end(self, ctx: Context) -> Artifact | None:
         config: SummaryConfig = ctx.config
@@ -94,17 +103,32 @@ class SummaryPlugin(Plugin):
         )
         metadata = await ctx.store.session_metadata(ctx.session_id)
 
-        instruction = _STYLE_INSTRUCTION.get(config.style, _STYLE_INSTRUCTION["bullets"])
-        decisions = (
-            "\nList decisions separately under a **Decisions** heading. "
-            "If none were made, say so in one line."
-            if config.include_decisions
-            else ""
+        # A saved prompt replaces the whole instruction block, `style` and the
+        # decisions heading with it: somebody who wrote "list the customer's
+        # objections, then what we promised" does not also want three bullet
+        # headings they did not ask for. The output language goes with it — the
+        # built-in prompt pins English, and a prompt written in Russian asking
+        # for a Russian summary would otherwise be contradicted a line later.
+        instruction = (
+            ctx.prompt.instructions.strip()
+            if ctx.prompt is not None
+            else (
+                f"{_STYLE_INSTRUCTION.get(config.style, _STYLE_INSTRUCTION['bullets'])}\n"
+                + (
+                    "List decisions separately under a **Decisions** heading. "
+                    "If none were made, say so in one line.\n"
+                    if config.include_decisions
+                    else ""
+                )
+                + "Write in English regardless of the transcript's language."
+            )
         )
         prompt = (
             f"{instruction}\n"
-            f"Use at most {config.max_words} words.{decisions}\n"
-            f"Write in English regardless of the transcript's language.\n\n"
+            # The length ceiling survives a custom prompt because it is not a
+            # style choice — it is what bounds the size of the reply, and of the
+            # bill for it.
+            f"Use at most {config.max_words} words.\n\n"
             f"Session: {metadata.get('title') or 'untitled'}\n"
             f"Duration: {metadata.get('duration_ms', 0) // 60000} minutes, "
             f"{len(speakers)} speaker(s)\n\n"
@@ -119,8 +143,17 @@ class SummaryPlugin(Plugin):
             mime="text/markdown",
             content=text.strip(),
             metadata={
-                "style": config.style,
                 "utterances": len(utterances),
                 "speakers": len(speakers),
+                # The prompt's *name*, not its id: the record has to still make
+                # sense after the prompt has been edited or deleted. `style` is
+                # recorded only when it was what shaped the output, because
+                # "style: bullets" beside a custom prompt is a claim about this
+                # summary that is not true of it.
+                **(
+                    {"prompt": ctx.prompt.name}
+                    if ctx.prompt is not None
+                    else {"style": config.style}
+                ),
             },
         )

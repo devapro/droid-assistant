@@ -185,11 +185,15 @@ class DeepgramConfig(BaseModel):
 
 
 class OpenAIASRConfig(BaseModel):
-    """OpenAI transcription — two endpoints behind one backend.
+    """OpenAI transcription — two endpoints behind one backend, one of them
+    currently unreachable.
 
-    * `model` is used for Balanced and Batch mode over `/v1/audio/transcriptions`.
-    * `realtime_model` is used for Live mode over the Realtime WebSocket, which
-      is the only one of the two that is genuinely streaming.
+    * `model` serves every mode over `/v1/audio/transcriptions`. Live included:
+      it is a sliding window over that same call (`pipeline/localagreement.py`).
+    * `realtime_model` and `realtime_url` configure the Realtime WebSocket. The
+      client exists; nothing in the pipeline opens it, so these change nothing
+      today. They stay because a native stream is what would stop Live paying
+      for each second of audio two or three times.
 
     Model choice is a real trade rather than a preference:
 

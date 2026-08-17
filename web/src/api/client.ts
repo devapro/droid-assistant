@@ -96,6 +96,8 @@ export interface PluginInfo {
   requires_llm: boolean
   /** Never runs on its own; produces something only when asked to. */
   on_demand: boolean
+  /** Reads a saved prompt when given one — what the prompt picker is offered on. */
+  accepts_prompt: boolean
   config: Record<string, unknown>
   config_schema: JsonSchema
   last_error: string | null
@@ -188,13 +190,30 @@ export interface ModeInfo {
   emits_partials: boolean
   uses_cloud_asr: boolean
   uses_cloud_llm: boolean
-  requires_streaming_backend: boolean
+  /** Live buys its partials by recognising the same audio repeatedly. */
+  redecodes_window: boolean
 }
 
 export interface Preset {
   id: string
   name: string
   config: Record<string, unknown>
+}
+
+/**
+ * A named instruction to generate an artifact with (FR-PLG-14).
+ *
+ * Saved in Settings, chosen beside the button that spends the call. A plugin's
+ * own configuration is one setting with one value; these exist because several
+ * are right at once and which one depends on the recording.
+ */
+export interface Prompt {
+  id: string
+  name: string
+  instructions: string
+  created_at: number
+  updated_at: number
+  last_used_at: number | null
 }
 
 export class ApiError extends Error {
@@ -249,8 +268,7 @@ export const api = {
       multi_language_warning: string | null
     }>('/api/languages'),
 
-  modes: () =>
-    request<{ modes: ModeInfo[]; default: string; streaming_backend: boolean }>('/api/modes'),
+  modes: () => request<{ modes: ModeInfo[]; default: string }>('/api/modes'),
 
   createSession: (body: Record<string, unknown>) =>
     request<{
@@ -308,13 +326,23 @@ export const api = {
    * Run one plugin over a session, or over `utteranceIds` of it. Scoping is
    * what "make an action item from this line" posts; omitting it means the
    * whole conversation, which is what a re-run after an edit wants.
+   *
+   * `promptId` names a saved prompt to run with instead of the plugin's own
+   * instructions (FR-PLG-14).
    */
-  runPlugin: (sessionId: string, name: string, utteranceIds?: string[]) =>
+  runPlugin: (
+    sessionId: string,
+    name: string,
+    options: { utteranceIds?: string[]; promptId?: string | null } = {},
+  ) =>
     request<{ ran: boolean; artifact: Artifact | null; note?: string }>(
       `/api/sessions/${sessionId}/plugins/${name}/run`,
       {
         method: 'POST',
-        body: JSON.stringify(utteranceIds?.length ? { utterance_ids: utteranceIds } : {}),
+        body: JSON.stringify({
+          ...(options.utteranceIds?.length ? { utterance_ids: options.utteranceIds } : {}),
+          ...(options.promptId ? { prompt_id: options.promptId } : {}),
+        }),
       },
     ),
 
@@ -355,6 +383,14 @@ export const api = {
     request<Preset>('/api/presets', { method: 'PUT', body: JSON.stringify({ name, config }) }),
 
   deletePreset: (id: string) => request<void>(`/api/presets/${id}`, { method: 'DELETE' }),
+
+  prompts: () => request<{ prompts: Prompt[] }>('/api/prompts'),
+
+  /** With an `id`, rewrites that prompt — which is how renaming works. */
+  savePrompt: (body: { id?: string; name: string; instructions: string }) =>
+    request<Prompt>('/api/prompts', { method: 'PUT', body: JSON.stringify(body) }),
+
+  deletePrompt: (id: string) => request<void>(`/api/prompts/${id}`, { method: 'DELETE' }),
 
   exportUrl: (sessionId: string, format: string) => `/api/sessions/${sessionId}/export?format=${format}`,
 

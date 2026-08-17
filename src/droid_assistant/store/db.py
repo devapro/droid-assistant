@@ -25,7 +25,7 @@ from ..domain import Embedding
 
 T = TypeVar("T")
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def encode_embedding(vec: Embedding | None) -> bytes | None:
@@ -130,6 +130,11 @@ class Database:
                 conn.execute(
                     "ALTER TABLE sessions ADD COLUMN cost_breakdown TEXT NOT NULL DEFAULT '{}'"
                 )
+
+        # v3 adds `prompts` and nothing else. A brand-new table needs no
+        # migration of its own — `schema.sql` above has already created it — so
+        # the version bump exists to stop an older build opening a database it
+        # would not understand, not to run any statement here.
 
         conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 

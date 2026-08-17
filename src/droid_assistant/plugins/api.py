@@ -38,9 +38,25 @@ __all__ = [
     "Event",
     "Plugin",
     "PluginStore",
+    "Prompt",
     "Speaker",
     "Utterance",
 ]
+
+
+@dataclass(slots=True, frozen=True)
+class Prompt:
+    """A saved instruction the operator picked for this run (FR-PLG-14).
+
+    Held apart from `config` because the two answer different questions. Config
+    is how a plugin is set up — one value, changed rarely, applying to every run.
+    A prompt is what this particular artifact should be: several exist at once,
+    and which one is right depends on the recording in front of you.
+    """
+
+    id: str
+    name: str
+    instructions: str
 
 
 class Event(StrEnum):
@@ -109,6 +125,13 @@ class Context:
     logger: logging.Logger
     event: Event
     payload: dict[str, Any]
+
+    #: The saved prompt this run was asked for, or None for the plugin's own
+    #: instructions (FR-PLG-14). A plugin that declares `accepts_prompt` reads it
+    #: and writes to it in place of whatever it would have said itself; one that
+    #: does not is never handed one, because a control that changed nothing would
+    #: be worse than no control.
+    prompt: Prompt | None = None
 
     #: The part of the session this run covers, or None for all of it. Set when
     #: the operator asked for one message rather than the whole conversation —
@@ -201,6 +224,10 @@ class Plugin:
     #: operator should make per recording, and a button they press is how they
     #: make it. `subscribes` still says which handler an on-demand run reaches.
     on_demand: ClassVar[bool] = False
+    #: This plugin does something with `ctx.prompt` (FR-PLG-14). Declared rather
+    #: than assumed, because it is what the UI offers the prompt picker on: shown
+    #: beside a plugin that ignores the choice, it would be a control that lies.
+    accepts_prompt: ClassVar[bool] = False
 
     async def on_session_start(self, ctx: Context) -> Artifact | None:
         return None

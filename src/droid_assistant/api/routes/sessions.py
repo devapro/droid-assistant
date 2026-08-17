@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from ...domain import LatencyMode, SessionState
 from ...events import EventType
 from ...pipeline.modes import describe as describe_mode
+from ...plugins.api import Prompt
 from ...store import audio as audio_store
 from .. import export as exporters
 from ..schemas import (
@@ -363,6 +364,11 @@ async def run_plugin(
     `utterance_ids` narrows it to particular lines — what "make an action item
     out of this message" posts. Omitting it means the whole conversation, which
     is what a re-run after an edit wants (FR-SES-9, FR-PLG-12).
+
+    `prompt_id` names a saved prompt to run with instead of the plugin's own
+    instructions (FR-PLG-14). An unknown one is refused rather than quietly
+    ignored: a run that silently used the built-in prompt would return a
+    perfectly good summary that is not the one that was asked for.
     """
     if await services.repo.get_session(session_id) is None:
         raise HTTPException(status_code=404, detail="no such session")
@@ -376,8 +382,16 @@ async def run_plugin(
             raise HTTPException(
                 status_code=404, detail=f"not utterances of this session: {', '.join(missing)}"
             )
+    prompt = None
+    if body is not None and body.prompt_id:
+        record = await services.repo.get_prompt(body.prompt_id)
+        if record is None:
+            raise HTTPException(status_code=404, detail=f"no prompt with id {body.prompt_id!r}")
+        prompt = Prompt(id=record["id"], name=record["name"], instructions=record["instructions"])
     try:
-        artifact, declined = await services.plugins.run_now(name, session_id, utterance_ids=wanted)
+        artifact, declined = await services.plugins.run_now(
+            name, session_id, utterance_ids=wanted, prompt=prompt
+        )
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=f"no plugin named {name!r}") from exc
     except RuntimeError as exc:
@@ -390,6 +404,10 @@ async def run_plugin(
             "artifact": None,
             "note": declined or "the plugin produced no artifact",
         }
+    if prompt is not None:
+        # After the run, not before: the most-recently-used order is meant to
+        # surface what actually produced something.
+        await services.repo.touch_prompt(prompt.id)
     return {"ran": True, "artifact": artifact}
 
 
@@ -489,7 +507,10 @@ async def list_modes(services: Services) -> dict[str, Any]:
             describe_mode(mode, cloud_asr=cloud_asr, cloud_llm=cloud_llm) for mode in LatencyMode
         ],
         "default": str(services.settings.capture.default_mode),
-        "streaming_backend": services.asr.capabilities.streaming,
+        # No `streaming_backend` here any more. It was the client's reason to
+        # grey out Live, and it was answering the wrong question: Live runs on
+        # `transcribe` like every mode, so the backend's streaming API decides
+        # nothing. `/api/health` still reports it as a backend property.
     }
 
 

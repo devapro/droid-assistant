@@ -1,5 +1,10 @@
-"""Deepgram streaming ASR — the cloud backend (FR-ASR-3), and the answer for
-Tier D hardware and for Live mode where local latency does not reach NFR-PERF-1.
+"""Deepgram ASR — the cloud backend (FR-ASR-3), and the answer for Tier D
+hardware and for Live mode where local latency does not reach NFR-PERF-1.
+
+Its streaming socket (`start_stream`) is the one native stream this project has,
+and nothing calls it: the pipeline drives every mode, Live included, through
+`transcribe`. So Live over Deepgram is a request per window step rather than one
+open socket — correct, and paying for the same audio more than once.
 
 This is the one backend that sends audio off the operator's machine, so it is
 reachable only when `privacy.local_only` is false and the session has not opted
@@ -29,8 +34,8 @@ log = logging.getLogger(__name__)
 #: nova-2 never has**. Declared here rather than left as "cloud, so presumably
 #: everything", because the catalogue's `None` means "no restriction" — and that
 #: is what would offer an `sr` session a model the provider then rejects, at the
-#: moment of recording. Deepgram being the only genuinely streaming backend,
-#: nova-3 is also what makes Live mode possible for Serbian at all.
+#: moment of recording. nova-3 is also the only cloud route to Serbian in any
+#: mode — a local fine-tune is the other, and it serves Live just as well.
 #:
 #: Primary subtags only: `ModelSpec.covers` compares the part before the hyphen,
 #: so the regional variants (`en-GB`, `pt-BR`, `zh-Hant`) are already covered.

@@ -20,6 +20,7 @@ still the right one to publish under.
 
 from __future__ import annotations
 
+import time
 from dataclasses import replace
 
 import numpy as np
@@ -649,6 +650,114 @@ class TestLiveTurns:
         assert stored[0].text == "слушай давай еще не"
         assert stored[1].text == "будем забывать про инфраструктурный"
         assert stored[0].speaker_id != stored[1].speaker_id
+
+
+# --- how often Live decodes -------------------------------------------------
+
+
+class TestLiveCadence:
+    """`window_step_ms`, which is the entire cost of Live mode.
+
+    The consumer loop reaches `_live_tick` once per 200 ms ingest frame, and
+    every call that gets through decodes a window of up to `window_max_ms`. So
+    the gap between "as often as audio arrives" and "as often as the profile
+    asks" is a factor of four in load on the recogniser — on a local model, the
+    difference between keeping up and falling behind for the rest of the
+    session. The step was declared and never read; these pin it.
+    """
+
+    async def feed_speech(self, pipeline: SessionPipeline, duration_ms: int) -> None:
+        """Hand over continuous speech the way ingest does — 200 ms at a time,
+        after enough silence for the energy VAD to find its noise floor."""
+        samples = np.concatenate([silence(600), tone(duration_ms)])
+        frame = int(SAMPLE_RATE * 0.2)
+        for offset in range(0, len(samples) - frame + 1, frame):
+            await pipeline._feed(
+                AudioBuffer(
+                    samples[offset : offset + frame], start_ms=int(offset / SAMPLE_RATE * 1000)
+                )
+            )
+
+    async def test_arriving_audio_is_not_decoded_once_per_frame(self, settings, repo) -> None:
+        asr = ScriptedASR([])
+        pipeline, _ = await build(settings, repo, asr, ScriptedDiarization(), LatencyMode.LIVE)
+
+        await self.feed_speech(pipeline, 2_000)
+
+        # Ten frames of speech went past inside one step; one decode came back.
+        assert len(asr.contexts) == 1
+
+    async def test_the_step_is_a_floor_and_not_a_one_shot(self, settings, repo) -> None:
+        """The partial has to keep growing while someone is still talking, so
+        the next tick after the step has elapsed decodes again."""
+        asr = ScriptedASR([])
+        pipeline, _ = await build(settings, repo, asr, ScriptedDiarization(), LatencyMode.LIVE)
+        await self.feed_speech(pipeline, 2_000)
+
+        pipeline._next_live_tick_at = 0.0  # the step has elapsed
+        await pipeline._live_tick()
+
+        assert len(asr.contexts) == 2
+
+    async def test_a_new_region_does_not_wait_out_the_previous_ones_step(
+        self, settings, repo
+    ) -> None:
+        """The first partial of a message is where the latency target is felt.
+        Charging it a step that was spent on the speech which just ended would
+        put the delay exactly where it is most visible."""
+        pipeline, _ = await build(
+            settings, repo, ScriptedASR([]), ScriptedDiarization(), LatencyMode.LIVE
+        )
+        pipeline._cache = AudioBuffer(tone(3_000), start_ms=0)
+        pipeline._next_live_tick_at = time.monotonic() + 3600
+
+        await pipeline._finalise_live_segment(SpeechSegment(0, 1_000))
+
+        assert pipeline._next_live_tick_at == 0.0
+
+    async def one_partial(self, settings, repo, *, ingest_lead_ms: int) -> SessionPipeline:
+        """One Live partial, with ingest run `ingest_lead_ms` further ahead of
+        the consumer than the audio it decoded."""
+        pipeline, _ = await build(
+            settings, repo, ScriptedASR([]), ScriptedDiarization(), LatencyMode.LIVE
+        )
+        await pipeline.push(np.concatenate([silence(600), tone(2_000), tone(ingest_lead_ms)]))
+        await self.feed_speech(pipeline, 2_000)
+        return pipeline
+
+    async def test_the_partials_own_lateness_is_what_gets_recorded(self, settings, repo) -> None:
+        """Live's number is how far behind the newest audio the text on screen
+        sits. The pipeline timed only finals, against their VAD endpoint — which
+        is Balanced's number (NFR-PERF-2) recorded under Live's name, leaving
+        NFR-PERF-1 unmeasurable from a running session and R2 unanswerable."""
+        level = await self.one_partial(settings, repo, ingest_lead_ms=0)
+        ahead = await self.one_partial(settings, repo, ingest_lead_ms=1_000)
+
+        [when_level] = level.stats.partial_latencies_ms
+        [when_ahead] = ahead.stats.partial_latencies_ms
+        # A second more audio arrived while that window was being decoded, and
+        # the partial is a second further behind the room for it.
+        assert when_ahead - when_level == 1_000
+        assert when_level > 0
+
+    async def test_a_partials_lateness_is_not_pooled_with_a_finals(self, settings, repo) -> None:
+        """The two answer different requirements over different reference
+        points; averaged together they would describe neither."""
+        pipeline = await self.one_partial(settings, repo, ingest_lead_ms=1_000)
+
+        assert pipeline.stats.latencies_ms == []
+        assert pipeline.stats.summary()["latency_median_ms"] == 0
+        assert pipeline.stats.summary()["partial_latency_median_ms"] > 0
+
+    async def test_the_batch_modes_never_tick(self, settings, repo) -> None:
+        """Balanced recognises on the endpoint and Batch on stop; neither pays
+        for a sliding window, whatever the consumer loop calls."""
+        asr = ScriptedASR([])
+        pipeline, _ = await build(settings, repo, asr, ScriptedDiarization(), LatencyMode.BALANCED)
+
+        await pipeline._live_tick()
+
+        assert asr.contexts == []
 
 
 # --- the prompt itself ------------------------------------------------------

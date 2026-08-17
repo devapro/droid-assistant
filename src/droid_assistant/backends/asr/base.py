@@ -1,12 +1,16 @@
 """The ASR backend interface (SRS §5.6).
 
-Every backend implements `transcribe`. Only a genuinely streaming backend
-implements `start_stream`; the rest declare `streaming=False` in their
-capabilities and the server refuses Live mode with them at startup instead of
-failing mid-session.
+Every backend implements `transcribe`, and every mode — Live included — is built
+out of that one call. Live re-runs it over a sliding window and commits what two
+hypotheses agree on (`pipeline/localagreement.py`), so a backend needs no
+streaming API to serve it, only enough speed.
 
-`capabilities` is load-bearing: it is what turns "Live mode with a batch-only
-backend" from a 40-minute surprise into a startup error.
+`start_stream` is where a backend exposes a genuinely streaming API of its own.
+Deepgram and OpenAI Realtime have one; nothing in the pipeline calls it yet, so
+`capabilities.streaming` currently describes the backend rather than deciding
+anything. It is recorded because wiring Live to a native stream is worth doing
+where one exists — a real stream beats re-decoding the same audio 2–3 times —
+and because health output should say which backends could support that.
 """
 
 from __future__ import annotations
@@ -46,8 +50,8 @@ class ASRBackend(ABC):
 
     async def start_stream(self, config: StreamConfig) -> ASRStream:
         raise NotImplementedError(
-            f"{self.capabilities.name} is not a streaming backend. Use Balanced or Batch mode, "
-            "or configure a streaming backend such as `deepgram` for Live mode."
+            f"{self.capabilities.name} has no native streaming API. Every mode including Live "
+            "runs on `transcribe`, so nothing in the pipeline needs this."
         )
 
     async def load(self) -> None:

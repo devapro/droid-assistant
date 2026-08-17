@@ -29,7 +29,10 @@ class ModeProfile:
     emits_partials: bool
     transcribes_live: bool
     #: How often Live mode re-decodes its window. Below ~500 ms the decode cost
-    #: dominates and latency gets worse, not better.
+    #: dominates and latency gets worse, not better. Enforced in
+    #: `orchestrator._live_tick`, which its callers reach far more often than
+    #: this — the loop runs per ingest frame, and the step is what turns that
+    #: into a cadence a local model can hold.
     window_step_ms: int = 800
     #: The most audio one Live decode covers. Longer is more accurate and slower;
     #: this is the main knob R2 measures.
@@ -80,8 +83,9 @@ PROFILES = {
 
 _DESCRIPTIONS = {
     LatencyMode.LIVE: (
-        "Text appears as you speak and may be corrected in place. Highest quality bar, "
-        "highest cost, and it needs a streaming ASR backend."
+        "Text appears as you speak and may be corrected in place. Highest quality bar and "
+        "the highest cost: the recogniser re-runs over the last few seconds about once a "
+        "second, so it needs a machine with room to spare."
     ),
     LatencyMode.BALANCED: (
         "Each sentence appears once you finish it, and never changes afterwards. "
@@ -99,8 +103,15 @@ def profile_for(mode: LatencyMode) -> ModeProfile:
 
 
 def describe(mode: LatencyMode, *, cloud_asr: bool, cloud_llm: bool) -> dict[str, object]:
-    """What the UI shows next to a mode (FR-LAT-7): its latency target and
-    whether choosing it means audio or text leaves the server."""
+    """What the UI shows next to a mode (FR-LAT-7): its latency target, what it
+    costs, and whether choosing it means audio or text leaves the server.
+
+    No mode is ever reported as unavailable, because none is: all three run on
+    the same `transcribe` call. `redecodes_window` is the cost warning that
+    replaced the availability flag — Live buys its partials by recognising the
+    same audio repeatedly, which is a bill against a cloud backend and a load
+    against a local one.
+    """
     profile = profile_for(mode)
     return {
         "mode": str(mode),
@@ -109,5 +120,5 @@ def describe(mode: LatencyMode, *, cloud_asr: bool, cloud_llm: bool) -> dict[str
         "emits_partials": profile.emits_partials,
         "uses_cloud_asr": cloud_asr,
         "uses_cloud_llm": cloud_llm,
-        "requires_streaming_backend": mode is LatencyMode.LIVE,
+        "redecodes_window": profile.emits_partials,
     }

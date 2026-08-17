@@ -105,7 +105,9 @@ export function useActionItems(sessionId: string | null): ActionItems {
       setNotice(null)
       setError(null)
       try {
-        const result = await api.runPlugin(sessionId, ACTION_ITEMS, [utterance.utterance_id])
+        const result = await api.runPlugin(sessionId, ACTION_ITEMS, {
+          utteranceIds: [utterance.utterance_id],
+        })
         // Three outcomes, and a reader acts on each differently. Saying "added"
         // for a line holding no commitment sends them to a tab that does not
         // contain what they were promised; saying "nothing to act on" about a

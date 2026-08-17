@@ -4,7 +4,7 @@
 that discovers, supervises, and isolates them.
 """
 
-from .api import Artifact, Context, Event, Plugin, format_transcript
+from .api import Artifact, Context, Event, Plugin, Prompt, format_transcript
 from .host import LoadedPlugin, PluginHost, discover
 
 __all__ = [
@@ -14,6 +14,7 @@ __all__ = [
     "LoadedPlugin",
     "Plugin",
     "PluginHost",
+    "Prompt",
     "discover",
     "format_transcript",
 ]

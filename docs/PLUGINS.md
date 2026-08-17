@@ -38,6 +38,7 @@ shows up as a tab in the session view.
 | `config_schema` | A pydantic model. The settings form is generated from it |
 | `subscribes` | The events you want. You are not called for anything else |
 | `requires_llm` | Declares the dependency, so the host can report you as unavailable rather than failing you |
+| `accepts_prompt` | Declares that you read `ctx.prompt`, so the UI offers the prompt picker beside your run (FR-PLG-14) |
 
 ### Events
 
@@ -76,6 +77,9 @@ async def on_session_end(self, ctx: Context) -> Artifact | None:
 - `ctx.previous(kind)` — your own current artifact of that kind, or `None`.
   What a scoped run adds to.
 - `ctx.utterance_ids` — the scope, or `None` for the whole session.
+- `ctx.prompt` — the saved prompt this run was asked for, or `None` for your own
+  instructions. Only ever set if you declared `accepts_prompt`; see *Taking a
+  prompt* below.
 - `ctx.logger` — namespaced; use `extra=` for structured fields.
 
 ### Running over part of a session
@@ -157,6 +161,57 @@ Three fields, three correctly-typed inputs with validation, no UI code. Enums
 become a select, booleans a toggle, numbers a bounded number input, and
 `description` becomes the help text.
 
+## Taking a prompt (FR-PLG-14)
+
+Configuration is one setting with one value. Some of what a plugin does is not
+like that: `style` offering *bullets, prose, minutes* covers the common cases and
+none of the specific ones, because a support call, a one-to-one and a design
+review want different summaries and no enum guesses them.
+
+Saved prompts are the answer. The operator writes them in **Settings → Prompts**
+and picks one beside the button that starts the run; the plugin receives it on
+the context. Declare that you read it:
+
+```python
+class SummaryPlugin(Plugin):
+    accepts_prompt = True                   # what the UI offers the picker on
+
+    async def on_session_end(self, ctx: Context) -> Artifact | None:
+        instruction = (
+            ctx.prompt.instructions if ctx.prompt is not None else MY_OWN_INSTRUCTIONS
+        )
+        ...
+        return Artifact(
+            kind="summary",
+            content=text,
+            # The name, not the id: the record has to keep reading after the
+            # prompt has been edited or deleted.
+            metadata={"prompt": ctx.prompt.name} if ctx.prompt else {},
+        )
+```
+
+`ctx.prompt` is `None` for every dispatched event and for any run that did not
+name one, so the built-in path stays the default. A plugin that does not declare
+`accepts_prompt` is never handed one — a picker beside something that ignores the
+choice would be a control that lies, and so would a plugin that accepted the
+prompt and quietly did nothing with it.
+
+Three things are worth keeping out of a prompt's reach:
+
+- **The system prompt.** A custom prompt is a matter of taste; "do not invent a
+  decision the transcript does not support" is not, and a summary that fabricates
+  one is worse than no summary.
+- **The cost ceiling.** `max_words` bounds the reply and the bill for it. It is
+  not a style choice, so it survives.
+- **What the run may read.** A prompt changes the instructions, never the scope:
+  `ctx.utterances()` still returns exactly the lines the run covers.
+
+What a prompt *should* replace is the whole instruction block, including the
+output language. Somebody who wrote their own ordering does not also want three
+headings they did not ask for, and a prompt written in Russian asking for a
+Russian summary must not be contradicted a line later by a built-in "write in
+English".
+
 ## What the host guarantees
 
 - **Off the live path.** Your handler cannot delay a single utterance, however
@@ -224,7 +279,8 @@ async def test_wordcount():
 `src/droid_assistant/plugins/builtin/` holds two, written the way a third-party
 plugin should be:
 
-- **`summary.py`** — config as a model, one handler, an artifact returned, and a
-  prompt built around the failure mode that matters (inventing decisions).
+- **`summary.py`** — config as a model, one handler, an artifact returned, a
+  prompt built around the failure mode that matters (inventing decisions), and
+  instructions the operator can replace per run without losing that guard.
 - **`action_items.py`** — emits two artifacts from one run, Markdown for reading
   and JSON for anything downstream, with tolerant parsing that refuses to guess.

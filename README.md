@@ -14,6 +14,8 @@ native app and there will not be one — the reasoning is recorded in
   gender survive the trip out of Russian and Serbian
 - **Plugins** that receive conversation events and produce artifacts; summary
   and action-items ship as references
+- **Your own prompts** for a summary, written once in Settings and chosen per
+  recording
 - **Capture the room or the machine** — a microphone, the audio playing on the
   device running the browser (a video call, a recording), or both mixed
 - **Local-first**: nothing leaves the machine unless you enable a cloud backend
@@ -67,12 +69,22 @@ uv run droid-assistant doctor
 
 The server is expected to be a small always-on machine.
 
-| Tier | Hardware | Local ASR ceiling | Modes without cloud |
+| Tier | Hardware | Local ASR ceiling | Modes that hold up without cloud |
 |---|---|---|---|
 | A | Apple Silicon Mac, or x86-64 + NVIDIA ≥ 6 GB | `large-v3-turbo` at realtime | all three |
 | **B — recommended** | Intel N100/N150 mini PC, 16 GB (~$170) | `small`/`medium` int8 | Balanced, Batch |
 | C | Raspberry Pi 5 | `small` int8, around realtime | Batch |
 | D | Raspberry Pi 4 | `tiny`/`base` only | **none — cloud ASR required** |
+
+That last column is a recommendation, not a restriction. Live is a sliding
+window over the same batch recogniser rather than a separate engine, so every
+mode is offered on every tier and none of them is refused for want of a
+streaming backend. What the tier decides is whether recognition keeps up: Live
+re-decodes the last few seconds about once a second, so it wants roughly three
+times realtime from the model, and recognition that falls behind stays behind
+for the rest of the session. Below tier A, try Live with a smaller model than
+the ceiling — the numbers that would turn this column into a measurement are
+still open (SRS R2).
 
 A Pi 4 is an excellent always-on host and a poor inference host. It will run the
 web app, ingest, storage, and plugins comfortably, but Russian accuracy at
@@ -127,6 +139,33 @@ list show a filled checkbox.
 
 Marks are the cheap one. If you are not sure which you want mid-conversation,
 mark it and decide later.
+
+## Summaries in your own words
+
+A summary is generated when you ask for one — it costs a call over the whole
+transcript, and most recordings are never opened twice. Open a recording, and the
+**Summary** tab has the button.
+
+The built-in prompt writes bullets, prose, or minutes. That covers the common
+cases and none of the specific ones, so you can write your own:
+
+> **Settings → Prompts → New prompt**
+>
+> *Customer call* — "Summarise this for the account team. Lead with what the
+> customer asked for, then what we committed to, then anything left open. Quote
+> figures exactly. Write in the language of the call."
+
+It then appears in a picker beside **Generate**, and beside **Re-run** on a
+summary that already exists — so a summary in the wrong shape is one choice and
+one click from the right one. Each summary records which prompt produced it, by
+name, and keeps saying so after that prompt is edited or deleted.
+
+Two things a prompt cannot switch off: the instruction not to invent anything the
+transcript does not support, and the word ceiling in the plugin's own settings.
+The first is what keeps a summary trustworthy; the second is what bounds the
+bill. Everything else — shape, headings, ordering, output language — is yours.
+Any plugin can offer this; see
+[docs/PLUGINS.md](docs/PLUGINS.md#taking-a-prompt-fr-plg-14).
 
 ## Accuracy, honestly
 

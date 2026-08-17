@@ -326,3 +326,72 @@ class TestPagination:
 
         assert [s.title for s in await repo.list_sessions(tag="infra")] == ["tagged"]
         assert [s.title for s in await repo.list_sessions(language="ru")] == ["tagged"]
+
+
+class TestPrompts:
+    """FR-PLG-14: the saved instructions a summary can be generated with."""
+
+    async def test_the_one_used_last_is_offered_first(self, repo: Repository) -> None:
+        """The picker's whole job is to make the usual choice one tap away, and
+        the usual choice is nearly always the previous one."""
+        standup = await repo.upsert_prompt("Standup", "terse")
+        await repo.upsert_prompt("Customer call", "lead with the ask")
+
+        # Nothing used yet, so alphabetical — an arbitrary order would make the
+        # list appear to reshuffle itself between visits.
+        assert [p["name"] for p in await repo.list_prompts()] == ["Customer call", "Standup"]
+
+        await repo.touch_prompt(standup["id"])
+        assert (await repo.list_prompts())[0]["name"] == "Standup"
+
+    async def test_an_unknown_id_reads_as_absent_rather_than_raising(
+        self, repo: Repository
+    ) -> None:
+        """What the run endpoint turns into a 404."""
+        assert await repo.get_prompt("prm_nope") is None
+
+    async def test_rewriting_by_id_keeps_the_row(self, repo: Repository) -> None:
+        saved = await repo.upsert_prompt("Standup", "terse")
+        rewritten = await repo.upsert_prompt("Daily", "even terser", saved["id"])
+        assert rewritten["id"] == saved["id"]
+        assert [p["name"] for p in await repo.list_prompts()] == ["Daily"]
+
+
+class TestSchemaUpgrade:
+    async def test_a_database_written_before_prompts_existed_gains_the_table(
+        self, data_dir: Path
+    ) -> None:
+        """v3 adds a table and nothing else, and real databases exist at v2.
+
+        `schema.sql` is all `IF NOT EXISTS`, so opening one creates the table —
+        this asserts that rather than trusting it, because the alternative is
+        every prompt request failing on a database that has been in use.
+        """
+        path = data_dir / "upgrade.db"
+        first = Database(path)
+        await first.connect()
+        await first.close()
+
+        # Rewind to a database that predates the table.
+        conn = sqlite3.connect(path)
+        conn.executescript("DROP TABLE prompts; PRAGMA user_version = 2;")
+        conn.close()
+
+        upgraded = Database(path)
+        await upgraded.connect()
+        try:
+            assert await Repository(upgraded).list_prompts() == []
+            assert await upgraded.fetch_value("PRAGMA user_version") == 3
+        finally:
+            await upgraded.close()
+
+    async def test_a_database_from_a_newer_build_is_refused(self, data_dir: Path) -> None:
+        """Downgrading the server is not a way to open a database it does not
+        understand; upgrading the server is."""
+        path = data_dir / "future.db"
+        conn = sqlite3.connect(path)
+        conn.executescript("PRAGMA user_version = 99;")
+        conn.close()
+
+        with pytest.raises(RuntimeError, match="newer droid-assistant"):
+            await Database(path).connect()

@@ -149,6 +149,20 @@ CREATE TABLE IF NOT EXISTS presets (
     last_used_at        INTEGER
 );
 
+-- FR-PLG-14. A named instruction, written once and picked when an artifact is
+-- asked for: "the way I summarise a customer call" as against "the way I
+-- summarise a standup". Separate from `plugin_state.config_json` because a
+-- plugin's configuration is one setting with one value, and the point of these
+-- is that several exist at once and the choice is made per run.
+CREATE TABLE IF NOT EXISTS prompts (
+    id                  TEXT PRIMARY KEY,
+    name                TEXT NOT NULL UNIQUE,
+    instructions        TEXT NOT NULL,
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL,
+    last_used_at        INTEGER
+);
+
 -- v2 tables, created now so that embeddings recorded from v1 onward (FR-DIA-5)
 -- have somewhere to attach when enrollment ships.
 CREATE TABLE IF NOT EXISTS persons (

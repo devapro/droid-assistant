@@ -78,6 +78,10 @@ class PluginRunRequest(BaseModel):
     #: a UI that meant to send one id and sent none would otherwise summarise
     #: the entire conversation and look like it had worked.
     utterance_ids: Annotated[list[str], Field(min_length=1)] | None = None
+    #: A saved prompt to run with (FR-PLG-14). `null` means the plugin's own
+    #: built-in instructions, which is what every caller sent before this
+    #: existed and remains the default.
+    prompt_id: str | None = None
 
 
 class PresetRequest(BaseModel):
@@ -85,6 +89,23 @@ class PresetRequest(BaseModel):
 
     name: str = Field(min_length=1, max_length=80)
     config: dict[str, Any]
+
+
+class PromptRequest(BaseModel):
+    """A named instruction to generate an artifact with (FR-PLG-14).
+
+    `id` present means "rewrite this prompt", which is how a rename is
+    expressed; absent means the name is the identity, so saving a name that
+    already exists edits it rather than filing an indistinguishable second copy.
+    """
+
+    model_config = {"extra": "forbid"}
+
+    id: str | None = None
+    name: str = Field(min_length=1, max_length=80)
+    #: The ceiling is generous on purpose — a prompt somebody has tuned over
+    #: several meetings is a page of text, not a sentence.
+    instructions: str = Field(min_length=1, max_length=8000)
 
 
 class ModelDownloadRequest(BaseModel):

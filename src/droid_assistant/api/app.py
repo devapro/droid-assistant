@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from .. import __version__
 from ..config import Settings
 from ..config import load as load_settings
-from .routes import health, models, plugins, sessions
+from .routes import health, models, plugins, prompts, sessions
 from .services import Services
 from .ws import events as ws_events
 from .ws import ingest as ws_ingest
@@ -78,6 +78,7 @@ def create_app(settings: Settings | None = None, *, services: Services | None = 
     app.include_router(health.router)
     app.include_router(sessions.router)
     app.include_router(plugins.router)
+    app.include_router(prompts.router)
     app.include_router(models.router)
     app.include_router(ws_ingest.router)
     app.include_router(ws_events.router)

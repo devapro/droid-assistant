@@ -16,7 +16,7 @@ from pydantic import BaseModel
 
 from droid_assistant.domain import Artifact, Utterance
 from droid_assistant.events import EventBus, EventType
-from droid_assistant.plugins.api import Context, Event, Plugin, format_transcript
+from droid_assistant.plugins.api import Context, Event, Plugin, Prompt, format_transcript
 from droid_assistant.plugins.host import PluginHost, discover
 
 # --- test doubles -----------------------------------------------------------
@@ -775,3 +775,149 @@ class TestOnDemandPlugins:
         host.plugins["summary"].config = {"min_utterances": 99}  # the double has three lines
         artifact, reason = await host.run_now("summary", "sess_1")
         assert artifact is not None, reason
+
+
+class RecordingLLM:
+    """Keeps what it was asked, so the assembled prompt can be asserted on."""
+
+    available = True
+
+    def __init__(self, reply: str = "a summary") -> None:
+        self.reply = reply
+        self.prompts: list[str] = []
+        self.systems: list[str] = []
+
+    async def complete(self, prompt: str, **kwargs: object) -> str:
+        self.prompts.append(prompt)
+        self.systems.append(str(kwargs.get("system") or ""))
+        return self.reply
+
+
+class PromptReporter(Plugin):
+    """Says which prompt it was handed, so the plumbing can be asserted."""
+
+    name = "reporter"
+    version = "1.0.0"
+    api_version = 1
+    subscribes = {Event.SESSION_END}
+
+    async def on_session_end(self, ctx: Context) -> Artifact:
+        return Artifact(kind="seen", content=ctx.prompt.name if ctx.prompt else "built-in")
+
+
+class TestCustomPrompts:
+    """FR-PLG-14. `style` offers bullets, prose, or minutes — which covers the
+    common cases and none of the specific ones. A support call, a one-to-one and
+    a design review want different summaries, and no enum of ours guesses them.
+    """
+
+    def summary(self):
+        from droid_assistant.plugins.builtin.summary import SummaryPlugin
+
+        return SummaryPlugin()
+
+    def prompt(self) -> Prompt:
+        return Prompt(
+            id="prm_1",
+            name="Customer call",
+            instructions="Lead with what the customer asked for, then what we promised.",
+        )
+
+    async def test_a_saved_prompt_replaces_the_built_in_instructions(self, harness) -> None:
+        """Not appended to them. Somebody who wrote their own ordering does not
+        also want three bullet headings they did not ask for."""
+        llm = RecordingLLM()
+        host = harness["build"]([self.summary()], llm=llm)
+        host.plugins["summary"].config = {"min_utterances": 1, "style": "bullets"}
+
+        await ran(host, "summary", "sess_1", prompt=self.prompt())
+        asked = llm.prompts[0]
+        assert "what the customer asked for" in asked
+        assert "Write short bullet points" not in asked
+        # The output language goes with the style: a prompt asking for Russian
+        # must not be contradicted a line later by our own "write in English".
+        assert "regardless of the transcript's language" not in asked
+
+    async def test_the_transcript_and_the_length_ceiling_still_go_with_it(self, harness) -> None:
+        """The ceiling is not a style choice — it is what bounds the reply, and
+        the bill for it — and a prompt with no transcript under it is useless."""
+        llm = RecordingLLM()
+        host = harness["build"]([self.summary()], llm=llm)
+        host.plugins["summary"].config = {"min_utterances": 1, "max_words": 250}
+
+        await ran(host, "summary", "sess_1", prompt=self.prompt())
+        assert "Use at most 250 words" in llm.prompts[0]
+        assert "я пришлю цифры до пятницы" in llm.prompts[0]
+
+    async def test_the_guard_against_invention_is_not_replaceable(self, harness) -> None:
+        """A custom prompt is a matter of taste. "Never invent a decision" is
+        not, and a summary that fabricates one is worse than no summary."""
+        llm = RecordingLLM()
+        host = harness["build"]([self.summary()], llm=llm)
+        host.plugins["summary"].config = {"min_utterances": 1}
+
+        await ran(host, "summary", "sess_1", prompt=self.prompt())
+        assert "Never invent a decision" in llm.systems[0]
+
+    async def test_the_artifact_records_which_prompt_produced_it(self, harness) -> None:
+        """By name, so the record still reads after the prompt is edited or
+        deleted — and without a `style` that had nothing to do with it."""
+        host = harness["build"]([self.summary()], llm=RecordingLLM())
+        host.plugins["summary"].config = {"min_utterances": 1}
+
+        artifact = await ran(host, "summary", "sess_1", prompt=self.prompt())
+        assert artifact["metadata"]["prompt"] == "Customer call"
+        assert "style" not in artifact["metadata"]
+
+    async def test_without_one_the_built_in_instructions_stand(self, harness) -> None:
+        """The default has to be unchanged by all of this: every caller that
+        existed before prompts did sends no prompt at all."""
+        llm = RecordingLLM()
+        host = harness["build"]([self.summary()], llm=llm)
+        host.plugins["summary"].config = {"min_utterances": 1, "style": "minutes"}
+
+        artifact = await ran(host, "summary", "sess_1")
+        assert "Write formal minutes" in llm.prompts[0]
+        assert artifact["metadata"]["style"] == "minutes"
+        assert "prompt" not in artifact["metadata"]
+
+    async def test_a_prompt_reaches_a_plugin_that_accepts_one(self, harness) -> None:
+        class Accepting(PromptReporter):
+            name = "accepting"
+            accepts_prompt = True
+
+        host = harness["build"]([Accepting()])
+        artifact = await ran(host, "accepting", "sess_1", prompt=self.prompt())
+        assert artifact["content"] == "Customer call"
+
+    async def test_a_plugin_that_does_not_accept_one_is_not_handed_it(self, harness) -> None:
+        """The picker is only offered where it does something, so this should not
+        arise — but a plugin quietly receiving a prompt it ignores would let a
+        caller believe the choice had taken effect."""
+        host = harness["build"]([PromptReporter()])
+        artifact = await ran(host, "reporter", "sess_1", prompt=self.prompt())
+        assert artifact["content"] == "built-in"
+
+    async def test_a_dispatched_event_never_carries_a_prompt(self, harness) -> None:
+        """A prompt is something a person chose for one run. Nothing about
+        `session.end` arriving on its own says which one they would have picked."""
+
+        class Accepting(PromptReporter):
+            name = "accepting"
+            accepts_prompt = True
+
+        host = harness["build"]([Accepting()])
+        await host.start(workers=1)
+        try:
+            await host.dispatch(EventType.SESSION_END, "sess_1", {})
+            await host.drain(timeout=5)
+        finally:
+            await host.stop()
+        assert [a.content for _s, _n, a in harness["artifacts"]] == ["built-in"]
+
+    def test_the_listing_says_which_plugins_accept_a_prompt(self, harness) -> None:
+        """What the UI shows the picker on. Beside a plugin that ignores the
+        choice it would be a control that lies."""
+        host = harness["build"]([self.summary(), GoodPlugin()])
+        listing = {row["name"]: row["accepts_prompt"] for row in host.listing()}
+        assert listing == {"summary": True, "good": False}

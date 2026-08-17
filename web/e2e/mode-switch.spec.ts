@@ -3,7 +3,7 @@
  *
  * It stays enabled while recording on purpose — FR-LAT-3 makes the mode
  * changeable mid-session, and the server applies it at the next VAD boundary.
- * What it must not do is offer a mode the recogniser cannot serve, or claim a
+ * What it must not do is hide a mode the recogniser can serve, or claim a
  * switch the server refused.
  */
 
@@ -29,42 +29,44 @@ test.describe('Latency mode', () => {
     await page.getByRole('button', { name: 'Stop', exact: true }).click()
   })
 
-  test('a mode the recogniser cannot serve is not offered', async ({ page }) => {
-    // The check read `requires_streaming_backend && !emits_partials`, which is
-    // never true — the only mode needing a streaming recogniser is the only one
-    // emitting partials. So Live was always selectable and always failed.
-    await page.route('**/api/modes', async (route) => {
-      const body = await (await route.fetch()).json()
-      route.fulfill({ json: { ...body, streaming_backend: false } })
-    })
+  test('every mode is offered, whatever the recogniser', async ({ page }) => {
+    // Live was greyed out for any recogniser without a streaming API, which is
+    // every local one — while the server had all along been serving Live on
+    // exactly those, by re-decoding a sliding window. The option is real.
     await page.goto('/')
-    await expect(selector(page).locator('option[value="live"]')).toBeDisabled()
+    await expect(selector(page).locator('option[value="live"]')).toBeEnabled()
     await expect(selector(page).locator('option[value="balanced"]')).toBeEnabled()
+    await selector(page).selectOption('live')
+    await expect(selector(page)).toHaveValue('live')
+  })
+
+  test('what Live costs is said where it is chosen', async ({ page }) => {
+    // The mode is available but not free: it recognises the same audio several
+    // times a second. Against a local recogniser that is the one thing worth
+    // knowing before picking it (FR-LAT-7).
+    await page.goto('/')
+    await expect(selector(page).locator('option[value="live"]')).toContainText(
+      /re-recognises continuously/,
+    )
+    await expect(selector(page).locator('option[value="batch"]')).not.toContainText(
+      /re-recognises continuously/,
+    )
   })
 
   test('a refused switch does not leave the selector lying', async ({ page }) => {
     // The mode was applied locally before the request and nothing awaited the
     // rejection, so the selector showed a mode the session was not in.
-    //
-    // Live has to be *selectable* for this to be reachable at all, so the
-    // recogniser is claimed to stream and the switch is refused anyway — which
-    // is also the honest case: a backend can stop streaming between the page
-    // loading and the switch.
-    await page.route('**/api/modes', async (route) => {
-      const body = await (await route.fetch()).json()
-      route.fulfill({ json: { ...body, streaming_backend: true } })
-    })
     await startRecording(page)
     await page.route('**/mode', (route) =>
       route.fulfill({
         status: 409,
         contentType: 'application/json',
-        body: JSON.stringify({ error: 'Live mode needs a streaming ASR backend' }),
+        body: JSON.stringify({ error: 'this session is not running' }),
       }),
     )
     await selector(page).selectOption('live')
 
-    await expect(page.getByText(/needs a streaming ASR backend/)).toBeVisible()
+    await expect(page.getByText(/this session is not running/)).toBeVisible()
     await expect(selector(page)).toHaveValue('balanced')
     await page.getByRole('button', { name: 'Stop', exact: true }).click()
   })

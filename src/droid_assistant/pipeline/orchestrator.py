@@ -79,6 +79,11 @@ class PipelineStats:
     translation_failures: int = 0
     last_latency_ms: float = 0.0
     latencies_ms: list[float] = field(default_factory=list)
+    #: How far behind the live edge a Live partial lands — the number
+    #: NFR-PERF-1 is written against, and the one R2 has to settle. Kept apart
+    #: from `latencies_ms`, which times finals against their VAD endpoint
+    #: (NFR-PERF-2): averaging the two would describe neither.
+    partial_latencies_ms: list[float] = field(default_factory=list)
 
     def record_latency(self, value: float) -> None:
         self.last_latency_ms = value
@@ -86,10 +91,14 @@ class PipelineStats:
         if len(self.latencies_ms) > 500:
             del self.latencies_ms[:-500]
 
+    def record_partial_latency(self, value: float) -> None:
+        self.partial_latencies_ms.append(value)
+        if len(self.partial_latencies_ms) > 500:
+            del self.partial_latencies_ms[:-500]
+
     def summary(self) -> dict[str, float | int]:
-        values = sorted(self.latencies_ms)
-        median = values[len(values) // 2] if values else 0.0
-        p95 = values[int(len(values) * 0.95)] if values else 0.0
+        median, p95 = _percentiles(self.latencies_ms)
+        partial_median, partial_p95 = _percentiles(self.partial_latencies_ms)
         return {
             "utterances": self.utterances,
             "asr_calls": self.asr_calls,
@@ -97,7 +106,16 @@ class PipelineStats:
             "translation_failures": self.translation_failures,
             "latency_median_ms": round(median, 1),
             "latency_p95_ms": round(p95, 1),
+            "partial_latency_median_ms": round(partial_median, 1),
+            "partial_latency_p95_ms": round(partial_p95, 1),
         }
+
+
+def _percentiles(samples: list[float]) -> tuple[float, float]:
+    values = sorted(samples)
+    if not values:
+        return 0.0, 0.0
+    return values[len(values) // 2], values[int(len(values) * 0.95)]
 
 
 @dataclass(slots=True)
@@ -185,6 +203,11 @@ class SessionPipeline:
         self._turn: OpenTurn | None = None
         self._live_partial_id: str | None = None
         self._live_segment_start_ms = 0
+        #: Monotonic deadline for the next Live re-decode (`window_step_ms`).
+        #: A floor on the interval between decode *starts*, not a schedule: a
+        #: decode slower than the step just runs back-to-back, which is the only
+        #: honest thing to do when the machine cannot keep up.
+        self._next_live_tick_at = 0.0
         self._pending_mode: LatencyMode | None = None
         self._paused = False
         self._pause_started_ms = 0
@@ -355,6 +378,7 @@ class SessionPipeline:
         )
         self._agreement.reset()
         self._live_partial_id = None
+        self._next_live_tick_at = 0.0  # switching into Live should show something at once
         await self._close_turn()  # the new mode assembles messages differently
         await self.repo.update_session(self.session.id, mode=mode)
         await self.bus.publish(
@@ -732,11 +756,21 @@ class SessionPipeline:
 
         Runs only while VAD says we are inside speech: decoding silence is how
         Whisper produces the hallucinated subtitle credits FR-ASR-9 filters.
+
+        The consumer loop calls this once per 200 ms ingest frame, which is four
+        times more often than `window_step_ms` asks for. That cadence is the
+        whole cost of Live mode — every tick is a full decode of a window up to
+        `window_max_ms` long — so the step is enforced here rather than at the
+        call sites, which is also what keeps the idle path from re-decoding audio
+        that has not changed.
         """
         if not self.profile.emits_partials or not self._segmenter.in_speech:
             return
         cache = self._cache
         if cache.samples.size == 0:
+            return
+        now = time.monotonic()
+        if now < self._next_live_tick_at:
             return
         window_start = max(
             self._agreement.committed_end_ms or self._live_segment_start_ms,
@@ -746,6 +780,9 @@ class SessionPipeline:
         if window.duration_ms < 400:
             return
 
+        # Charged only once the tick commits to decoding, so a window too short
+        # to be worth a decode does not push the next one out by a full step.
+        self._next_live_tick_at = now + self.profile.window_step_ms / 1000
         results = await self._transcribe(window)
         hypothesis = merge_results(results)
         if hypothesis is None:
@@ -757,6 +794,13 @@ class SessionPipeline:
         if self._live_partial_id is None:
             self._live_partial_id = new_id("utt")
             self._live_segment_start_ms = window_start
+        # How far behind the newest audio this text lands, which is what someone
+        # watching the screen actually experiences and what NFR-PERF-1 bounds.
+        # It includes the wait for the step, the decode, and everything the
+        # consumer loop did in between — all of which the reader waits through.
+        self.stats.record_partial_latency(
+            max(0.0, float(self._ring.write_position_ms - cache.end_ms))
+        )
         await self.bus.publish(
             self.session.id,
             EventType.UTTERANCE_PARTIAL,
@@ -798,6 +842,10 @@ class SessionPipeline:
         # decides which message on screen gets overwritten.
         self._agreement.reset()
         partial_id, self._live_partial_id = self._live_partial_id, None
+        # The next region starts from nothing on screen, and how fast its first
+        # partial arrives is what Live is judged on. Do not make it wait out a
+        # step charged against the region that just ended.
+        self._next_live_tick_at = 0.0
         if audio.samples.size == 0:
             return
 

@@ -15,6 +15,7 @@ import {
   api,
   type Artifact,
   type PluginInfo,
+  type Prompt,
   type Session,
   type Speaker,
   type Utterance,
@@ -58,6 +59,11 @@ export function SessionDetail({
   const [positionMs, setPositionMs] = useState(0)
   const [rerunning, setRerunning] = useState<string | null>(null)
   const [plugins, setPlugins] = useState<PluginInfo[]>([])
+  const [prompts, setPrompts] = useState<Prompt[]>([])
+  // One choice for the whole view: whichever prompt is picked is the one the
+  // next generation uses, whether it is reached from an empty tab or from the
+  // Re-run beside a summary that already exists. `null` is the plugin's own.
+  const [promptId, setPromptId] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const audio = useRef<HTMLAudioElement>(null)
@@ -83,6 +89,12 @@ export function SessionDetail({
       .plugins()
       .then((body) => setPlugins(body.plugins))
       .catch(() => setPlugins([]))
+    // Saved prompts (FR-PLG-14). Failing to fetch them costs the picker and
+    // nothing else — the built-in prompt is still what an unnamed run uses.
+    api
+      .prompts()
+      .then((body) => setPrompts(body.prompts))
+      .catch(() => setPrompts([]))
   }, [])
 
   // A session still recording, or still running plugins, keeps updating. This
@@ -144,7 +156,12 @@ export function SessionDetail({
     setRerunning(pluginName)
     setError(null)
     try {
-      const result = await api.runPlugin(sessionId, pluginName)
+      // Only where the plugin reads one. A prompt picked for the summary must
+      // not follow the reader over to a plugin that would ignore it.
+      const accepts = plugins.find((plugin) => plugin.name === pluginName)?.accepts_prompt
+      const result = await api.runPlugin(sessionId, pluginName, {
+        promptId: accepts ? promptId : null,
+      })
       await load()
       if (result.artifact) {
         // Land on what was just produced. Without this the view stays on the
@@ -329,6 +346,9 @@ export function SessionDetail({
           plugin={idlePlugin}
           onDemand={Boolean(plugins.find((p) => p.name === idlePlugin)?.on_demand)}
           running={rerunning === idlePlugin}
+          prompts={plugins.find((p) => p.name === idlePlugin)?.accepts_prompt ? prompts : []}
+          promptId={promptId}
+          onPromptChange={setPromptId}
           onGenerate={() => void rerun(idlePlugin)}
         />
       ) : (
@@ -336,6 +356,10 @@ export function SessionDetail({
           artifacts={current.filter((a) => a.kind === shown)}
           versions={(session.artifacts ?? []).filter((a) => a.kind === shown)}
           rerunning={rerunning}
+          plugins={plugins}
+          prompts={prompts}
+          promptId={promptId}
+          onPromptChange={setPromptId}
           onRerun={(plugin) => void rerun(plugin)}
         />
       )}
@@ -409,11 +433,17 @@ function GeneratePanel({
   plugin,
   onDemand,
   running,
+  prompts,
+  promptId,
+  onPromptChange,
   onGenerate,
 }: {
   plugin: string
   onDemand: boolean
   running: boolean
+  prompts: Prompt[]
+  promptId: string | null
+  onPromptChange: (id: string | null) => void
   onGenerate: () => void
 }) {
   const strings = t()
@@ -423,6 +453,9 @@ function GeneratePanel({
       <p className="text-fg-dim max-w-sm text-sm">
         {onDemand ? strings.session.onDemandHint(label) : strings.session.generateHint(label)}
       </p>
+      {/* Beside the button, not in Settings: which prompt is right is a decision
+          about this recording, taken while looking at it. */}
+      <PromptPicker prompts={prompts} value={promptId} onChange={onPromptChange} />
       <Button variant="default" onClick={onGenerate} disabled={running}>
         {running ? strings.session.generating : strings.session.generate(label)}
       </Button>
@@ -430,15 +463,62 @@ function GeneratePanel({
   )
 }
 
+/**
+ * Which instructions the next run uses (FR-PLG-14).
+ *
+ * Renders nothing when there are no saved prompts. A picker whose only option is
+ * "the built-in one" is a control that cannot change anything, and it would sit
+ * on the screen of everybody who never writes a prompt.
+ */
+function PromptPicker({
+  prompts,
+  value,
+  onChange,
+  compact = false,
+}: {
+  prompts: Prompt[]
+  value: string | null
+  onChange: (id: string | null) => void
+  compact?: boolean
+}) {
+  const strings = t()
+  if (prompts.length === 0) return null
+  return (
+    <select
+      value={value ?? ''}
+      onChange={(event) => onChange(event.target.value || null)}
+      aria-label={strings.prompts.selectorLabel}
+      className={`bg-surface-2 border-line rounded-lg border px-2 py-1.5 text-sm ${
+        compact ? '' : 'max-w-xs'
+      }`}
+    >
+      <option value="">{strings.prompts.builtIn}</option>
+      {prompts.map((prompt) => (
+        <option key={prompt.id} value={prompt.id}>
+          {prompt.name}
+        </option>
+      ))}
+    </select>
+  )
+}
+
 function ArtifactPanel({
   artifacts,
   versions,
   rerunning,
+  plugins,
+  prompts,
+  promptId,
+  onPromptChange,
   onRerun,
 }: {
   artifacts: Artifact[]
   versions: Artifact[]
   rerunning: string | null
+  plugins: PluginInfo[]
+  prompts: Prompt[]
+  promptId: string | null
+  onPromptChange: (id: string | null) => void
   onRerun: (plugin: string) => void
 }) {
   const strings = t()
@@ -462,6 +542,11 @@ function ArtifactPanel({
     }
   }
 
+  // Which prompt produced what is on screen, where it was recorded — the name
+  // rather than a reference, so it survives that prompt being edited or deleted.
+  const producedBy = typeof artifact.metadata?.prompt === 'string' ? artifact.metadata.prompt : null
+  const acceptsPrompt = plugins.find((p) => p.name === artifact.plugin_name)?.accepts_prompt
+
   return (
     <div className="flex-1 overflow-y-auto px-4 py-3">
       <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -469,7 +554,8 @@ function ArtifactPanel({
           {artifact.plugin_name} v{artifact.version}
         </Pill>
         {versions.length > 1 && <Pill tone="neutral">{versions.length} versions</Pill>}
-        <div className="ml-auto flex gap-2">
+        {producedBy && <Pill tone="neutral">{strings.prompts.usedFor(producedBy)}</Pill>}
+        <div className="ml-auto flex flex-wrap items-center gap-2">
           <Button variant="ghost" onClick={() => void copy()}>
             {copied ? strings.session.copied : strings.session.copy}
           </Button>
@@ -478,6 +564,14 @@ function ArtifactPanel({
               {strings.session.share}
             </Button>
           )}
+          {/* Re-running is the other half of the picker: a summary in the wrong
+              shape is fixed by choosing a prompt and pressing this. */}
+          <PromptPicker
+            prompts={acceptsPrompt ? prompts : []}
+            value={promptId}
+            onChange={onPromptChange}
+            compact
+          />
           <Button variant="default" onClick={() => onRerun(artifact.plugin_name)} disabled={rerunning !== null}>
             {rerunning === artifact.plugin_name ? strings.session.rerunning : strings.session.rerun}
           </Button>

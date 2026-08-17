@@ -30,9 +30,6 @@ export function Record({ onOpenSession }: { onOpenSession: (id: string) => void 
 
   const [devices, setDevices] = useState<DeviceInfo[]>([])
   const [modes, setModes] = useState<ModeInfo[]>([])
-  // Whether the recogniser can stream. Live is impossible without one, and the
-  // server refuses it — so the option has to say so rather than fail on click.
-  const [streamingBackend, setStreamingBackend] = useState(true)
   const [presets, setPresets] = useState<Preset[]>([])
   const [languages, setLanguages] = useState<{ code: string; name: string }[]>([])
   const [multiLanguageWarning, setMultiLanguageWarning] = useState<string | null>(null)
@@ -59,10 +56,7 @@ export function Record({ onOpenSession }: { onOpenSession: (id: string) => void 
         api.languages().catch(() => null),
         api.presets().catch(() => null),
       ])
-      if (modeInfo) {
-        setModes(modeInfo.modes)
-        setStreamingBackend(modeInfo.streaming_backend)
-      }
+      if (modeInfo) setModes(modeInfo.modes)
       if (langInfo) {
         setLanguages(langInfo.languages)
         setMultiLanguageWarning(langInfo.multi_language_warning)
@@ -271,21 +265,19 @@ export function Record({ onOpenSession }: { onOpenSession: (id: string) => void 
             className="bg-surface-2 border-line rounded-lg border px-2 py-1.5"
             aria-label={strings.settings.mode}
           >
-            {modes.map((mode) => {
-              // This read `requires_streaming_backend && !emits_partials`,
-              // which is never true: the only mode that needs streaming is the
-              // only one that emits partials. So Live was always offered, and
-              // choosing it against a batch-only recogniser failed at the
-              // server. The answer was in `modes.streaming_backend` all along —
-              // the client fetched it and threw it away.
-              const unavailable = mode.requires_streaming_backend && !streamingBackend
-              return (
-                <option key={mode.mode} value={mode.mode} disabled={unavailable}>
-                  {mode.mode}
-                  {unavailable ? ` — ${strings.settings.needsStreamingBackend}` : ''}
-                </option>
-              )
-            })}
+            {/* Every mode is offered. Live used to be greyed out against a
+                recogniser that declared no streaming API, which was every local
+                one — while the server had all along been running Live on those
+                same recognisers by re-decoding a window. What is left to say
+                about Live is what it costs, not whether it exists. */}
+            {modes.map((mode) => (
+              <option key={mode.mode} value={mode.mode}>
+                {mode.mode}
+                {mode.redecodes_window && !mode.uses_cloud_asr
+                  ? ` — ${strings.settings.redecodesWindow}`
+                  : ''}
+              </option>
+            ))}
           </select>
 
           <button

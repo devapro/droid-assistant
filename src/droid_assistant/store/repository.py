@@ -160,6 +160,17 @@ def _speaker_from_row(row: sqlite3.Row) -> Speaker:
     )
 
 
+def _prompt_json(row: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "name": row["name"],
+        "instructions": row["instructions"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+        "last_used_at": row["last_used_at"],
+    }
+
+
 # Columns read for list views; `embedding` is deliberately excluded because it is
 # by far the largest column and no list view needs it.
 _UTT_COLS = (
@@ -816,3 +827,62 @@ class Repository:
 
     async def delete_preset(self, preset_id: str) -> None:
         await self.db.execute("DELETE FROM presets WHERE id = ?", (preset_id,))
+
+    # --- prompts (FR-PLG-14) ------------------------------------------------
+
+    async def list_prompts(self) -> list[dict[str, Any]]:
+        """Most recently used first, as the selector wants it.
+
+        The same ordering serves both places these appear: the picker beside a
+        Generate button, where the prompt used last time is nearly always the
+        one wanted again, and the editor in Settings, where a stable order
+        matters more than an alphabetical one.
+        """
+        rows = await self.db.fetch_all(
+            "SELECT * FROM prompts ORDER BY last_used_at DESC NULLS LAST, name"
+        )
+        return [_prompt_json(r) for r in rows]
+
+    async def get_prompt(self, prompt_id: str) -> dict[str, Any] | None:
+        row = await self.db.fetch_one("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+        return None if row is None else _prompt_json(row)
+
+    async def upsert_prompt(
+        self, name: str, instructions: str, prompt_id: str | None = None
+    ) -> dict[str, Any]:
+        """Create a prompt, or rewrite the one `prompt_id` names.
+
+        An id means "this prompt, whatever it is now called", which is what lets
+        the editor rename one. Without an id the name is the identity, so saving
+        an existing name edits it rather than failing on the unique constraint or
+        filing a second prompt the operator cannot tell apart from the first.
+        """
+        now = now_ms()
+        if prompt_id is not None:
+            await self.db.execute(
+                "UPDATE prompts SET name = ?, instructions = ?, updated_at = ? WHERE id = ?",
+                (name, instructions, now, prompt_id),
+            )
+            row = await self.db.fetch_one("SELECT * FROM prompts WHERE id = ?", (prompt_id,))
+            if row is None:
+                raise KeyError(prompt_id)
+            return _prompt_json(row)
+
+        await self.db.execute(
+            "INSERT INTO prompts (id, name, instructions, created_at, updated_at) "
+            "VALUES (?,?,?,?,?) ON CONFLICT (name) DO UPDATE SET "
+            "instructions = excluded.instructions, updated_at = excluded.updated_at",
+            (new_id("prm"), name, instructions, now, now),
+        )
+        row = await self.db.fetch_one("SELECT * FROM prompts WHERE name = ?", (name,))
+        assert row is not None
+        return _prompt_json(row)
+
+    async def touch_prompt(self, prompt_id: str) -> None:
+        """Record that a run used it — what the most-recently-used order is for."""
+        await self.db.execute(
+            "UPDATE prompts SET last_used_at = ? WHERE id = ?", (now_ms(), prompt_id)
+        )
+
+    async def delete_prompt(self, prompt_id: str) -> None:
+        await self.db.execute("DELETE FROM prompts WHERE id = ?", (prompt_id,))

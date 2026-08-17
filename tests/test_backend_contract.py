@@ -101,9 +101,13 @@ class TestASRContract:
         for earlier, later in pairwise(results):
             assert earlier.start_ms <= later.start_ms
 
-    async def test_non_streaming_backend_refuses_live_clearly(
+    async def test_a_backend_without_a_native_stream_says_so_clearly(
         self, name: str, backend: ASRBackend
     ) -> None:
+        """Nothing in the pipeline calls `start_stream` — Live runs on
+        `transcribe` — so this failure is a programming error rather than a
+        configuration one, and the message should not send anyone to change a
+        mode over it."""
         if backend.capabilities.streaming:
             pytest.skip("streaming backend")
         with pytest.raises(NotImplementedError, match="streaming"):
