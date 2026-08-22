@@ -7,6 +7,7 @@ adding the column later means never being able to attribute historical sessions.
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 from pathlib import Path
 
@@ -57,6 +58,36 @@ class TestTransactions:
     async def test_wal_is_enabled(self, db: Database) -> None:
         """WAL is what makes an abrupt kill survivable rather than corrupting."""
         assert (await db.fetch_value("PRAGMA journal_mode")).lower() == "wal"
+
+    async def test_concurrent_reads_are_not_served_a_shared_statement(
+        self, repo: Repository, db: Database
+    ) -> None:
+        """Reads from several threads at once must all answer truthfully.
+
+        Every read is dispatched with `asyncio.to_thread`, so a session being
+        watched while it records has the same row read from many threads at
+        once. Sharing one connection between them shares its statement cache
+        too, and the same prepared statement bound and stepped from two threads
+        returns another row's columns, `None`, or raises `InterfaceError` — a
+        404 on a session the reader is looking at. One connection per thread is
+        what keeps that from happening.
+        """
+        record = await make_session(
+            repo, client_user_agent="Mozilla/5.0 (a long enough string to notice)"
+        )
+        for seq in range(40):
+            await add(repo, record.id, seq, f"line {seq}")
+
+        async def read() -> None:
+            for _ in range(30):
+                got = await repo.get_session(record.id)
+                assert got is not None, "a session that exists read back as missing"
+                assert got.id == record.id
+                assert got.state is record.state
+                assert got.client_user_agent == record.client_user_agent
+                assert len(await repo.list_utterances(record.id)) == 40
+
+        await asyncio.gather(*(read() for _ in range(12)))
 
     async def test_foreign_keys_cascade_on_delete(self, repo: Repository) -> None:
         """FR-SES-12: deleting a session leaves no residual row."""

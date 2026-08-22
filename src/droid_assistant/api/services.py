@@ -361,6 +361,12 @@ class SessionManager:
             {
                 "ceiling_reached": True,
                 "switched_to_local": switched,
+                # The recording view names the recogniser and says whether audio
+                # is leaving the machine. A swap that did not announce itself
+                # would leave that badge claiming a cloud engine for the rest of
+                # the session — and the whole point of the badge is that it is
+                # true at the moment you look at it.
+                "recogniser": active.pipeline.recogniser,
                 # Being explicit matters: a ceiling that silently kept spending
                 # would be worse than no ceiling at all.
                 "note": (

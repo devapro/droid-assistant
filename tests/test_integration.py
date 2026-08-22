@@ -251,6 +251,37 @@ class TestEventStream:
         ):
             viewer.receive_json()
 
+    def test_the_opening_frame_names_the_recogniser(self, client) -> None:
+        """FR-UI-21. State, not an event: the recording view has to say which
+        engine is transcribing — and whether audio is leaving the machine — from
+        the moment it connects, and again after every reconnection. Waiting for
+        the next event would mean showing nothing until something happened."""
+        created = client.post("/api/sessions", json={"languages": ["en"]}).json()
+        session_id = created["session_id"]
+
+        with client.websocket_connect(f"/ws/sessions/{session_id}") as viewer:
+            frame = viewer.receive_json()
+            while frame["type"] != "subscribed":
+                frame = viewer.receive_json()
+            assert frame["live"] is True
+            assert frame["status"]["recogniser"] == {"name": "mock", "local": True}
+
+        client.post(f"/api/sessions/{session_id}/stop")
+
+    def test_a_finished_session_has_no_recogniser_to_report(self, client) -> None:
+        """Nothing is transcribing it any more, and `null` says so. A badge that
+        kept naming an engine would be claiming a session is still running."""
+        created = client.post("/api/sessions", json={"languages": ["en"]}).json()
+        session_id = created["session_id"]
+        client.post(f"/api/sessions/{session_id}/stop")
+
+        with client.websocket_connect(f"/ws/sessions/{session_id}") as viewer:
+            frame = viewer.receive_json()
+            while frame["type"] != "subscribed":
+                frame = viewer.receive_json()
+            assert frame["live"] is False
+            assert frame["status"] is None
+
 
 class TestEditingAndArtifacts:
     def test_editing_marks_the_line_and_keeps_the_original(self, client) -> None:
@@ -781,6 +812,44 @@ class TestCostTracking:
         assert billed == [("asr", pytest.approx(0.006), "priced-mock")]
         assert pipeline.billed_audio_ms == 60_000
 
+    async def test_stop_finalises_a_session_whose_consumer_will_not_drain(
+        self, services: Services, monkeypatch
+    ) -> None:
+        """A wedged consumer must not take the recording down with it.
+
+        The drain timeout used to escape `stop`, which answered the client 500
+        and left the session at `recording` for good: audio never finalised,
+        ingest tokens never revoked, and every later `stop` returning early
+        because `_stopped` was already set. The UI then watches a session that
+        can never end.
+        """
+        import asyncio
+
+        from droid_assistant.domain import SessionState, new_id, now_ms
+        from droid_assistant.pipeline import orchestrator as orch
+        from droid_assistant.store.repository import SessionRecord
+
+        record = SessionRecord(id=new_id("sess"), started_at=now_ms())
+        await services.repo.create_session(record)
+        pipeline = orch.SessionPipeline(
+            record,
+            services.settings,
+            services.repo,
+            services.bus,
+            asr=services.asr,
+        )
+        monkeypatch.setattr(orch, "DRAIN_TIMEOUT_S", 0.05)
+        wedged = asyncio.create_task(asyncio.sleep(30), name="consume:wedged")
+        pipeline._tasks.append(wedged)
+
+        await pipeline.stop()
+
+        assert wedged.cancelled()
+        stored = await services.repo.get_session(record.id)
+        assert stored is not None
+        assert stored.state is SessionState.ENDED
+        assert stored.ended_at is not None
+
     async def test_a_local_backend_is_not_billed(self, services: Services) -> None:
         import numpy as np
 
@@ -803,6 +872,51 @@ class TestCostTracking:
         await pipeline._transcribe(AudioBuffer(np.zeros(SAMPLE_RATE * 10, dtype=np.float32)))
         assert billed == []
         assert pipeline.billed_audio_ms == 0
+
+    async def test_the_reported_recogniser_follows_the_engine_in_use(
+        self, services: Services
+    ) -> None:
+        """FR-UI-21 across FR-CFG-7's fallback.
+
+        Reaching the ceiling swaps `pipeline.asr` for a local engine mid-session.
+        What the recording view shows has to follow that swap, because "local" is
+        a claim about where the room's audio is going — a badge left naming the
+        cloud engine would be wrong in the direction that matters.
+        """
+        from droid_assistant.domain import ASRCapabilities, new_id, now_ms
+        from droid_assistant.pipeline.orchestrator import SessionPipeline
+        from droid_assistant.store.repository import SessionRecord
+
+        class CloudMock:
+            capabilities = ASRCapabilities(
+                name="deepgram:nova-3",
+                streaming=True,
+                languages=None,
+                word_timestamps=True,
+                local=False,
+                price_per_minute_usd=0.006,
+            )
+
+            async def transcribe(self, audio, config):
+                return []
+
+            async def load(self) -> None: ...
+
+            async def close(self) -> None: ...
+
+        record = SessionRecord(id=new_id("sess"), started_at=now_ms())
+        await services.repo.create_session(record)
+        pipeline = SessionPipeline(
+            record,
+            services.settings,
+            services.repo,
+            services.bus,
+            asr=CloudMock(),  # type: ignore[arg-type]
+        )
+        assert pipeline.status()["recogniser"] == {"name": "deepgram:nova-3", "local": False}
+
+        pipeline.asr = services.asr  # what `_degrade_to_local` does at the ceiling
+        assert pipeline.status()["recogniser"] == {"name": "mock", "local": True}
 
     async def test_the_ceiling_degrades_the_llm_rather_than_failing(self) -> None:
         """The requirement is explicit: continue locally and report the switch,

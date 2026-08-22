@@ -39,6 +39,25 @@ export interface Notice {
   remedy?: string
 }
 
+/** The engine transcribing this session, as the server reports it. */
+export interface Recogniser {
+  /** `faster-whisper:large-v3-turbo`, `deepgram:nova-3`, … */
+  name: string
+  /** False means audio is leaving this machine while the recording runs. */
+  local: boolean
+}
+
+/** Read one out of a status payload, which may be from any version of anything. */
+function recogniserFrom(value: unknown): Recogniser | null {
+  if (!value || typeof value !== 'object') return null
+  const { name, local } = value as { name?: unknown; local?: unknown }
+  // `local` is the half that must never be guessed: rendering "local" for a
+  // cloud recogniser is a privacy claim, so an incomplete payload reports
+  // nothing rather than a default.
+  if (typeof name !== 'string' || typeof local !== 'boolean') return null
+  return { name, local }
+}
+
 interface RecordingState {
   state: RecordState
   sessionId: string | null
@@ -60,6 +79,16 @@ interface RecordingState {
   costUsd: number
   costBreakdown: Record<string, number>
   ceilingReached: boolean
+  /**
+   * Which engine is transcribing, and whether it is on this machine (FR-UI-21).
+   *
+   * From the session's own pipeline rather than from configuration: a session
+   * pinned to one language may be routed to a different model, and one that
+   * trips its cost ceiling has its recogniser swapped mid-recording. `null`
+   * until the stream says — which is also the honest answer for an offline
+   * recording, where nothing is recognising anything yet.
+   */
+  recogniser: Recogniser | null
 
   settings: CaptureSettings
   modes: ModeInfo[]
@@ -124,6 +153,7 @@ export const useRecording = create<RecordingState>((set, get) => ({
   costUsd: 0,
   costBreakdown: {},
   ceilingReached: false,
+  recogniser: null,
   settings: loadSettings(),
   modes: [],
 
@@ -157,6 +187,7 @@ export const useRecording = create<RecordingState>((set, get) => ({
       costUsd: 0,
       costBreakdown: {},
       ceilingReached: false,
+      recogniser: null,
     })
 
     try {
@@ -233,6 +264,14 @@ export const useRecording = create<RecordingState>((set, get) => ({
         stream = new EventStream({
           sessionId,
           onEvent: (event) => applyEvent(set, get, event),
+          // The opening frame carries the pipeline's state, which is where the
+          // recogniser comes from. Taking it here rather than from
+          // `/api/health` matters: health reports the server's configured
+          // backend, and this session may have been routed to another one.
+          onSubscribed: ({ status }) => {
+            const recogniser = recogniserFrom(status?.recogniser)
+            if (recogniser) set({ recogniser })
+          },
           onResync: async (reason) => {
             get().notify({ severity: 'info', component: 'connection', message: reason })
             const session = await api.getSession(sessionId)
@@ -347,6 +386,7 @@ export const useRecording = create<RecordingState>((set, get) => ({
       speakers: {},
       level: 0,
       notices: [],
+      recogniser: null,
     }),
 }))
 
@@ -438,6 +478,11 @@ function applyEvent(set: Setter, get: Getter, event: ServerEvent): void {
       break
 
     case 'status': {
+      // A recogniser swapped at the cost ceiling arrives this way. Without it
+      // the badge would go on naming a cloud engine the session had stopped
+      // using — which is the one thing the badge exists not to do.
+      const recogniser = recogniserFrom(data.recogniser)
+      if (recogniser) set({ recogniser })
       if (typeof data.cost_usd === 'number') set({ costUsd: data.cost_usd })
       if (data.cost_breakdown && typeof data.cost_breakdown === 'object') {
         set({ costBreakdown: data.cost_breakdown as unknown as Record<string, number> })

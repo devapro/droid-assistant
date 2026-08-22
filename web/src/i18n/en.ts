@@ -37,6 +37,12 @@ export const en = {
     level: 'Input level',
     elapsed: 'Elapsed',
     speakers: 'speakers',
+    onThisMachine: 'local',
+    inTheCloud: 'cloud',
+    recogniserLocal: (name: string) =>
+      `Recognising with ${name}, on this machine. No audio is leaving it.`,
+    recogniserCloud: (name: string) =>
+      `Recognising with ${name}, a cloud service. Audio is leaving this machine while you record.`,
   },
 
   preflight: {

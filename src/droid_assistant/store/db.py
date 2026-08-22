@@ -6,7 +6,8 @@ mode survives an abrupt kill by design; what it does not survive is a half-
 written multi-row change outside a transaction, so there are none.
 
 Blocking `sqlite3` calls are pushed to a thread so a slow write cannot stall the
-audio path.
+audio path. That is why reads take a connection *per thread* rather than sharing
+one: see `Database._reader`.
 """
 
 from __future__ import annotations
@@ -14,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import json
 import sqlite3
+import threading
 from collections.abc import Callable, Iterable, Sequence
 from importlib import resources
 from pathlib import Path
@@ -58,7 +60,7 @@ def loads(raw: str | None, default: Any = None) -> Any:
 class Database:
     """An async facade over a single SQLite file.
 
-    Reads run on a shared read connection; writes are serialised through one
+    Reads run on a read connection per thread; writes are serialised through one
     write connection, which is how SQLite wants to be used and removes the
     `database is locked` class of bug entirely.
     """
@@ -67,14 +69,18 @@ class Database:
         self.path = path
         self._write_lock = asyncio.Lock()
         self._write: sqlite3.Connection | None = None
-        self._read: sqlite3.Connection | None = None
+        self._local = threading.local()
+        self._readers: list[sqlite3.Connection] = []
+        self._readers_lock = threading.Lock()
+        #: Bumped on close, so a reader cached by a thread that outlives this
+        #: `Database` is never handed back after being closed underneath it.
+        self._generation = 0
 
     # --- lifecycle ----------------------------------------------------------
 
     async def connect(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._write = await asyncio.to_thread(self._open)
-        self._read = await asyncio.to_thread(self._open, readonly_hint=True)
         await asyncio.to_thread(self._migrate, self._write)
 
     def _open(self, readonly_hint: bool = False) -> sqlite3.Connection:
@@ -100,10 +106,13 @@ class Database:
         return conn
 
     async def close(self) -> None:
-        for conn in (self._read, self._write):
+        with self._readers_lock:
+            readers, self._readers = self._readers, []
+            self._generation += 1
+        for conn in (*readers, self._write):
             if conn is not None:
                 await asyncio.to_thread(conn.close)
-        self._read = self._write = None
+        self._write = None
 
     # --- migrations ---------------------------------------------------------
 
@@ -140,18 +149,49 @@ class Database:
 
     # --- reads --------------------------------------------------------------
 
+    def _reader(self) -> sqlite3.Connection:
+        """This thread's read connection, opened on first use.
+
+        One connection per thread, not one shared by all of them. `sqlite3` will
+        *let* a connection be used from several threads once
+        `check_same_thread=False` is set, but it does not serialise the prepared
+        statements it caches on that connection: two threads running the same
+        SQL get handed the same statement, and bind and step it over each other.
+        Reads then fail with `InterfaceError: bad parameter or other API misuse`
+        or — worse, because nothing raises — come back with columns belonging to
+        another thread's row, or `None`. A `get_session` that answers `None` for
+        a session that plainly exists is a 404 on a recording someone is
+        watching, so this is not a tidiness fix.
+
+        Since every read is dispatched with `asyncio.to_thread`, the count is
+        bounded by the event loop's executor, and WAL means readers never block
+        each other or the writer.
+        """
+        generation = self._generation
+        cached = getattr(self._local, "reader", None)
+        if cached is not None and cached[0] == generation:
+            conn: sqlite3.Connection = cached[1]
+            return conn
+
+        conn = self._open(readonly_hint=True)
+        with self._readers_lock:
+            if self._generation != generation:  # closed while we were opening
+                conn.close()
+                raise RuntimeError(f"{self.path} is closed")
+            self._readers.append(conn)
+        self._local.reader = (generation, conn)
+        return conn
+
     async def fetch_one(self, sql: str, params: Sequence[Any] = ()) -> sqlite3.Row | None:
         def run() -> sqlite3.Row | None:
-            assert self._read is not None
-            row: sqlite3.Row | None = self._read.execute(sql, params).fetchone()
+            row: sqlite3.Row | None = self._reader().execute(sql, params).fetchone()
             return row
 
         return await asyncio.to_thread(run)
 
     async def fetch_all(self, sql: str, params: Sequence[Any] = ()) -> list[sqlite3.Row]:
         def run() -> list[sqlite3.Row]:
-            assert self._read is not None
-            return self._read.execute(sql, params).fetchall()
+            return self._reader().execute(sql, params).fetchall()
 
         return await asyncio.to_thread(run)
 

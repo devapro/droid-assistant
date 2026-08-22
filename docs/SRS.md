@@ -317,6 +317,7 @@ Screen-by-screen layout, states, and interaction behaviour are specified in [§5
 | FR-UI-18 | M | v1 | Before recording starts the client shall confirm server reachability and microphone level, and block with an actionable message if either fails | With the server stopped, Record reports it and offers local recording (FR-CAP-17); with a muted or absent microphone, Record reports that instead of starting a silent session |
 | FR-UI-19 | S | v1 | Artifacts shall be copyable to the clipboard and shareable via the platform share sheet, in one interaction | Copy places the rendered summary on the clipboard; on a platform exposing `navigator.share`, Share opens the native sheet |
 | FR-UI-20 | S | v1 | All interface strings shall be externalised for translation. v1 ships English only | No user-facing string is hard-coded in a component; adding a locale file changes the interface language with no code change |
+| FR-UI-21 | S | v1 | The recording indicator shall name the recogniser transcribing the session and state whether it runs on this machine, taking both from the running pipeline rather than from configuration | While recording against a local model the indicator reads *local · faster-whisper*; against a cloud one it reads *cloud · deepgram* and is visually distinct. A session routed to a per-language model names that model, and a session whose recogniser is swapped for a local one at its cost ceiling updates without a reload |
 
 ### 3.10 Configuration
 
@@ -415,6 +416,7 @@ Targets are split by microphone condition, because a phone on a meeting table an
 | ID | Requirement |
 |---|---|
 | NFR-LEG-1 | An unmistakable recording indicator shall be visible whenever capture is active (FR-UI-3). The browser's own microphone indicator satisfies most of this for free |
+| NFR-LEG-4 | The recording indicator shall also say whether the recogniser transcribing the session runs on this machine (FR-UI-21). The *per-session data-egress display* deferred in v1.2 stays deferred; this is the one line of it that costs nothing — the pipeline already knows which engine it is calling, and "is the room's audio leaving this machine right now" is not a question anybody should have to answer by reading configuration |
 | NFR-LEG-2 | Documentation shall state plainly that recording law varies by jurisdiction — roughly a dozen US states require all-party consent, Germany criminalises recording confidential speech under §201 StGB, and Serbia, Russia, and the EU each impose their own constraints — and that **the operator, not the software, is responsible for lawful use** |
 | NFR-LEG-3 | The project shall not ship any feature designed to conceal that recording is taking place |
 
@@ -492,6 +494,8 @@ States: `idle` → `permission` → `recording` → `stopping` → `done`, with 
 ```
 ┌──────────────────────────────────┐
 │ ● REC  12:04       Live · RU→EN  │  persistent, undismissable (FR-UI-3)
+│ ⌂ local · faster-whisper         │  which recogniser, and whether audio
+│                                  │  leaves this machine (FR-UI-21)
 ├──────────────────────────────────┤
 │ ▁▃▅▇▅▃▁              ● connected │  level + link state (FR-UI-10, FR-UI-6)
 ├──────────────────────────────────┤

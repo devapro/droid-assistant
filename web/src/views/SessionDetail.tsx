@@ -97,24 +97,54 @@ export function SessionDetail({
       .catch(() => setPrompts([]))
   }, [])
 
+  // Refetching per event does not scale to a long transcript, because the whole
+  // session comes back every time. A burst — a replayed backlog, or a fast
+  // recogniser closing turns — collapses into one refetch.
+  const reload = useRef<number | null>(null)
+  const scheduleLoad = useCallback(() => {
+    if (reload.current !== null) return
+    reload.current = window.setTimeout(() => {
+      reload.current = null
+      void load()
+    }, 250)
+  }, [load])
+
+  useEffect(
+    () => () => {
+      if (reload.current !== null) window.clearTimeout(reload.current)
+    },
+    [],
+  )
+
+  // Whether anything more can arrive for this session: it is still recording,
+  // or it has ended owing artifacts that have not landed yet (FR-UI-17).
+  const watching =
+    !!session &&
+    (session.state !== 'ended' || (!!session.artifacts_stale && !session.artifacts?.length))
+
   // A session still recording, or still running plugins, keeps updating. This
   // is the same stream the Record view uses (FR-SES-5).
+  //
+  // The dependency is that boolean and never `session` itself. Loading replaces
+  // the session object, so depending on it meant each event closed the stream
+  // and opened another — and a new stream asks for the backlog from seq 0,
+  // whose replay calls this handler again. One event became an endless
+  // reconnect-and-refetch loop that ended with the browser out of sockets.
   useEffect(() => {
-    if (!session || (session.state === 'ended' && !session.artifacts_stale)) return
-    if (session.state === 'ended' && session.artifacts?.length) return
+    if (!watching) return
     const stream = new EventStream({
       sessionId,
       onEvent: (event) => {
         if (['utterance.final', 'translation.final', 'artifact.created', 'session.end', 'speaker.changed', 'utterance.marked'].includes(event.type)) {
-          void load()
+          scheduleLoad()
         }
       },
-      onResync: () => void load(),
+      onResync: () => scheduleLoad(),
       onState: () => undefined,
     })
     stream.connect()
     return () => stream.close()
-  }, [session?.state, session?.artifacts?.length, sessionId, load, session])
+  }, [watching, sessionId, scheduleLoad])
 
   const speakers: Record<string, Speaker> = Object.fromEntries(
     (session?.speakers ?? []).map((speaker) => [speaker.id, speaker]),

@@ -71,6 +71,35 @@ test.describe('Recording', () => {
     expect(errors).toEqual([])
   })
 
+  test('the indicator says which recogniser is running, and where', async ({ page }) => {
+    /**
+     * FR-UI-21. The badge answers "is the room's audio leaving this machine",
+     * which is a question about the session in progress rather than about
+     * configuration — so it is asserted here, against whatever this deployment
+     * is actually running, rather than against a fixture.
+     */
+    await page.goto('/')
+    await record(page, 3)
+
+    const badge = page.getByTestId('recogniser')
+    await expect(badge).toBeVisible()
+    // Both halves, and no third state: an engine name, and one of two answers
+    // about where it runs. "local" rendered over a cloud recogniser would be a
+    // privacy claim that is false.
+    await expect(badge).toHaveText(/^(⌂ local|☁ cloud) · \S+/)
+
+    // The name is not decoration — the tooltip says what it means for the audio.
+    const hint = await badge.getAttribute('title')
+    expect(hint).toMatch(/(No audio is leaving it|Audio is leaving this machine)/)
+
+    await page.getByRole('button', { name: 'Stop', exact: true }).click()
+    await expect(page.getByText('Session finished.')).toBeVisible({ timeout: 60_000 })
+
+    // …and it goes with the recording. Nothing is transcribing any more, so a
+    // badge still naming an engine would be describing a session that ended.
+    await expect(badge).toHaveCount(0)
+  })
+
   test('pause and resume keep one session', async ({ page }) => {
     // FR-CAP-16: breaks and side conversations are routine.
     await page.goto('/')
@@ -135,6 +164,11 @@ test.describe('Layout', () => {
   test('no horizontal scrolling at any width', async ({ page }) => {
     // FR-UI-5: verified at 375 px, and nothing wider should regress it.
     await page.goto('/')
+    // Wait for what the server supplies before measuring. Measuring the shell
+    // is measuring the wrong page: this test passed for a build whose mode
+    // selector, once its options arrived, was 54 px wider than a phone —
+    // because the options had not arrived yet when it looked.
+    await expect(page.getByLabel('Latency mode').locator('option')).not.toHaveCount(0)
     for (const width of [375, 768, 1280]) {
       await page.setViewportSize({ width, height: 700 })
       const overflow = await page.evaluate(

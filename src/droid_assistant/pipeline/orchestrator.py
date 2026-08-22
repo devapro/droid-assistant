@@ -62,6 +62,10 @@ from .vad import SpeechSegment, VADSegmenter, build_vad, load_vad
 
 log = logging.getLogger(__name__)
 
+#: How long `stop` waits for the consumer to drain the ring before finalising
+#: the session without it.
+DRAIN_TIMEOUT_S = 30.0
+
 #: How much audio the ring buffer holds. Generous: it is the shock absorber
 #: between a browser that cannot pause and a model that sometimes stalls.
 RING_CAPACITY_MS = 120_000
@@ -258,8 +262,22 @@ class SessionPipeline:
 
         consume_task = self._tasks[0] if self._tasks else None
         if consume_task is not None:
-            with contextlib.suppress(asyncio.CancelledError):
-                await asyncio.wait_for(consume_task, timeout=30)
+            try:
+                await asyncio.wait_for(consume_task, timeout=DRAIN_TIMEOUT_S)
+            except asyncio.CancelledError:
+                pass
+            except TimeoutError:
+                # `wait_for` has already cancelled it. Carry on finalising
+                # regardless: a consumer wedged on a slow model must not take
+                # the session with it. Raising here would abandon the recording
+                # mid-stop — state left at `recording`, audio never finalised,
+                # ingest tokens never revoked — and every later `stop` returns
+                # early on `_stopped`, so nothing would ever finish it.
+                log.warning(
+                    "consumer did not drain in %.0fs; finalising anyway",
+                    DRAIN_TIMEOUT_S,
+                    extra={"session": self.session.id},
+                )
 
         # Normally the consumer closed the last message on its way out; this
         # covers the path where it died instead, so a translation is not lost
@@ -1314,5 +1332,21 @@ class SessionPipeline:
             "dropped_ms": ring.dropped_ms,
             "speakers": self._clusterer.speaker_count,
             "billed_audio_ms": self.billed_audio_ms,
+            "recogniser": self.recogniser,
             **self.stats.summary(),
         }
+
+    @property
+    def recogniser(self) -> dict[str, object]:
+        """Which engine is transcribing this session, and whether it is local.
+
+        Read off `self.asr` rather than off configuration, because the two
+        disagree in both directions. A session pinned to one language may be
+        routed to a different engine than the server default (`asr.by_language`),
+        and a session that trips its cost ceiling has its recogniser swapped for
+        a local one mid-recording. Configuration would report the wrong answer in
+        both cases, and "is audio leaving this machine right now" is exactly the
+        question that must not be answered from the wrong place.
+        """
+        capabilities = self.asr.capabilities
+        return {"name": capabilities.name, "local": capabilities.local}

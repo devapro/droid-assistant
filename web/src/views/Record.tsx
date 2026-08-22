@@ -16,7 +16,7 @@ import { CostBreakdown, formatCost } from '../components/CostBreakdown'
 import { Button, LevelMeter, Pill, clock } from '../components/primitives'
 import { t } from '../i18n'
 import { useActionItems } from '../state/actionItems'
-import { useRecording } from '../state/recording'
+import { useRecording, type Recogniser } from '../state/recording'
 import { PreflightDialog, type PreflightResult } from './Preflight'
 
 export function Record({ onOpenSession }: { onOpenSession: (id: string) => void }) {
@@ -24,7 +24,7 @@ export function Record({ onOpenSession }: { onOpenSession: (id: string) => void 
   const {
     state, elapsedMs, paused, offline, link, pendingChunks, droppedMs, level,
     utterances, partial, speakers, settings, notices, costUsd, costBreakdown,
-    ceilingReached, sessionId,
+    ceilingReached, sessionId, recogniser,
     start, stop, togglePause, mark, setMode, updateSettings, dismissNotice, reset,
   } = useRecording()
 
@@ -102,13 +102,19 @@ export function Record({ onOpenSession }: { onOpenSession: (id: string) => void 
         <div
           role="status"
           aria-live="polite"
-          className="bg-danger/15 border-danger/30 flex items-center gap-3 border-b px-4 py-2"
+          className="bg-danger/15 border-danger/30 flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-4 py-2"
         >
           <span className="bg-danger h-2.5 w-2.5 shrink-0 animate-pulse rounded-full" aria-hidden />
           <span className="text-danger text-sm font-semibold tracking-wide" data-testid="recording-indicator">
             {paused ? strings.record.paused : strings.record.recording}
           </span>
           <span className="font-mono text-sm tabular-nums">{clock(elapsedMs)}</span>
+          {/* FR-UI-21: whether audio is leaving this machine, while it is
+              happening. It belongs beside the recording indicator rather than in
+              Settings, because it is a fact about the conversation in progress —
+              and because Settings would answer from configuration, which this
+              session may not be using. */}
+          <RecogniserBadge recogniser={recogniser} />
           <span className="text-fg-dim ml-auto text-xs">
             {settings.languages.join('/').toUpperCase()} → {settings.targetLanguage.toUpperCase()}
             {' · '}
@@ -262,7 +268,12 @@ export function Record({ onOpenSession }: { onOpenSession: (id: string) => void 
           <select
             value={settings.mode}
             onChange={(event) => void setMode(event.target.value as 'live' | 'balanced' | 'batch')}
-            className="bg-surface-2 border-line rounded-lg border px-2 py-1.5"
+            // Capped, because a `select` is as wide as its longest *option* and
+            // Live's option carries a sentence about what it costs. Unconstrained,
+            // that one label made the control 429 px wide and the whole page
+            // scroll sideways at 375 px (FR-UI-5). The closed control clips; the
+            // open list does not, which is where the sentence is read anyway.
+            className="bg-surface-2 border-line max-w-40 truncate rounded-lg border px-2 py-1.5"
             aria-label={strings.settings.mode}
           >
             {/* Every mode is offered. Live used to be greyed out against a
@@ -363,6 +374,41 @@ export function Record({ onOpenSession }: { onOpenSession: (id: string) => void 
 
       {preflight && <PreflightDialog settings={settings} onDone={(result) => void beginRecording(result)} />}
     </div>
+  )
+}
+
+/**
+ * Which recogniser is running, and whether it is on this machine (FR-UI-21).
+ *
+ * Two questions, one badge, and the second is the one that matters: with a cloud
+ * recogniser the room's audio is leaving the machine for as long as the recording
+ * lasts. That was decided in Settings, possibly weeks ago and possibly by
+ * per-language routing nobody remembers configuring, so it is stated here while
+ * it is happening — coloured, because "cloud" is a consequence rather than a
+ * detail. The full engine name is on the tooltip; the badge shows the service,
+ * which is what the answer turns on.
+ *
+ * Nothing is rendered until the server has said. Guessing from configuration is
+ * how a badge ends up claiming "local" over a session that is streaming audio to
+ * a provider, and that mistake is worse than a moment with no badge.
+ */
+function RecogniserBadge({ recogniser }: { recogniser: Recogniser | null }) {
+  const strings = t()
+  if (!recogniser) return null
+  const service = recogniser.name.split(':')[0]!.replace(/_/g, '-')
+  return (
+    <span
+      data-testid="recogniser"
+      title={
+        recogniser.local
+          ? strings.record.recogniserLocal(recogniser.name)
+          : strings.record.recogniserCloud(recogniser.name)
+      }
+      className={`text-xs ${recogniser.local ? 'text-fg-dim' : 'text-warn font-medium'}`}
+    >
+      <span aria-hidden>{recogniser.local ? '⌂ ' : '☁ '}</span>
+      {recogniser.local ? strings.record.onThisMachine : strings.record.inTheCloud} · {service}
+    </span>
   )
 }
 
